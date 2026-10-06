@@ -1,0 +1,10 @@
+{
+  // Compiled build (npm run build → dist/). Not needed to run: Node 24 executes src/*.ts directly.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "noEmit": false
+  },
+  "include": ["src"]
+}

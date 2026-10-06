@@ -1,0 +1,33 @@
+{
+  // Source runs directly on Node 24 (type stripping), so only erasable syntax is allowed.
+  // This config type-checks src and test; tsconfig.build.json emits dist/.
+  "compilerOptions": {
+    "noEmit": true,
+
+    "module": "nodenext",
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": ["node"],
+
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noUncheckedSideEffectImports": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "sourceMap": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test"]
+}

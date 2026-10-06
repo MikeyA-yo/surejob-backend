@@ -1,0 +1,28 @@
+{
+  "name": "surej-be",
+  "version": "0.1.0",
+  "description": "SureJob POC backend: job lifecycle, escrow, insurance and payout adapters",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/main.ts",
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "typecheck": "tsc",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "demo": "bash scripts/demo.sh",
+    "demo:claim": "bash scripts/demo.sh claim"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}
