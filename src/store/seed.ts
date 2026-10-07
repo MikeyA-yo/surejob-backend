@@ -1,7 +1,7 @@
-import type { UserRow } from "./store.ts";
+import type { UserRecord } from "./types.ts";
 
 /** Fixed ids so the frontend and demo.sh can rely on them across resets. */
-export const SEED_CUSTOMER: UserRow = {
+export const SEED_CUSTOMER: UserRecord = {
   id: "usr_tunde",
   name: "Tunde",
   role: "customer",
@@ -9,7 +9,7 @@ export const SEED_CUSTOMER: UserRow = {
   trade: null,
 };
 
-export const SEED_WORKER: UserRow = {
+export const SEED_WORKER: UserRecord = {
   id: "usr_emeka",
   name: "Emeka",
   role: "worker",

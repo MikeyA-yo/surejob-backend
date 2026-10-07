@@ -1,21 +1,34 @@
 import { createAdapters } from "./adapters/index.ts";
 import { MockRuntime } from "./adapters/mock/runtime.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, type Config } from "./config.ts";
 import { createApp } from "./httpapi/app.ts";
 import { JobService } from "./jobs/service.ts";
 import { createLogger } from "./logger.ts";
 import { openDatabase } from "./store/db.ts";
-import { Store } from "./store/store.ts";
+import { MongoStore } from "./store/mongoStore.ts";
+import { SqliteStore } from "./store/sqliteStore.ts";
+import type { Store } from "./store/types.ts";
 
 const log = createLogger();
 
-function main(): void {
+/** MongoDB when MONGO_URI is set, otherwise the local SQLite file. */
+async function openStore(config: Config): Promise<Store> {
+  if (config.mongoUri) {
+    const store = await MongoStore.connect(config.mongoUri, config.mongoDb);
+    log.info("store connected", { store: "mongo", db: config.mongoDb });
+    return store;
+  }
+  log.info("store opened", { store: "sqlite", db: config.dbPath });
+  return new SqliteStore(openDatabase(config.dbPath));
+}
+
+async function main(): Promise<void> {
   const config = loadConfig();
 
-  const db = openDatabase(config.dbPath);
+  const store = await openStore(config);
   const mockRuntime = new MockRuntime(config.mock);
   const jobs = new JobService({
-    store: new Store(db),
+    store,
     adapters: createAdapters({ modes: config.modes, mockRuntime, logger: log, ecobank: config.ecobank }),
     logger: log,
     maxAmountKobo: config.jobs.maxAmountKobo,
@@ -27,8 +40,8 @@ function main(): void {
     log.warn("ecobank requests use fixed requestToken/secureHash (no ECOBANK_SECRET_KEY); sandbox only");
   }
 
-  const seededJobId = jobs.ensureSeeded();
-  if (seededJobId) log.info("seeded fresh database", { jobId: seededJobId });
+  const seededJobId = await jobs.ensureSeeded();
+  if (seededJobId) log.info("seeded empty database", { jobId: seededJobId });
 
   const app = createApp({ jobs, logger: log, corsOrigins: config.corsOrigins });
   const server = app.listen(config.port, config.host, (err) => {
@@ -38,7 +51,7 @@ function main(): void {
     }
     log.info("listening", {
       url: `http://${config.host}:${config.port}`,
-      db: config.dbPath,
+      store: store.kind,
       payment: config.modes.payment,
       insurance: config.modes.insurance,
       payout: config.modes.payout,
@@ -50,8 +63,7 @@ function main(): void {
   const shutdown = (signal: string) => {
     log.info("shutting down", { signal });
     server.close(() => {
-      db.close();
-      process.exit(0);
+      store.close().finally(() => process.exit(0));
     });
     server.closeAllConnections();
   };
@@ -59,9 +71,7 @@ function main(): void {
   process.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-try {
-  main();
-} catch (err) {
+main().catch((err: unknown) => {
   log.error("startup failed", { error: err instanceof Error ? err.message : String(err) });
   process.exit(1);
-}
+});

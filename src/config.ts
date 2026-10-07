@@ -5,7 +5,11 @@ import { FAILURE_POINTS, type FailurePoint } from "./adapters/mock/runtime.ts";
 export interface Config {
   port: number;
   host: string;
+  /** SQLite file, used when mongoUri is not set. */
   dbPath: string;
+  /** When set, MongoDB is the store (e.g. on Render, whose disk is wiped on every deploy). */
+  mongoUri: string | null;
+  mongoDb: string;
   /** Allowed browser origins. "*" allows any. */
   corsOrigins: readonly string[];
   modes: Modes;
@@ -89,6 +93,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(8080),
   HOST: z.string().min(1).default("127.0.0.1"),
   DB_PATH: z.string().min(1).default("data/surejob.db"),
+  MONGO_URI: z.string().trim().regex(/^mongodb(\+srv)?:\/\//, "must start with mongodb:// or mongodb+srv://").optional(),
+  MONGO_DB: z.string().trim().min(1).default("surejob"),
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
 
   PAYMENT_MODE: mode,
@@ -132,6 +138,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     host: e.HOST,
     dbPath: e.DB_PATH,
+    mongoUri: e.MONGO_URI ?? null,
+    mongoDb: e.MONGO_DB,
     corsOrigins: e.CORS_ORIGINS.split(",")
       .map((o) => o.trim())
       .filter(Boolean),

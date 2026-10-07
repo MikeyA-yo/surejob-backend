@@ -4,8 +4,11 @@ Owns the job lifecycle (book → quote → escrow → insure → confirm → pay
 Ecobank and Curacel only through adapters. Everything runs offline on mocks; each integration flips
 to its live sandbox with one env var. See `SureJob_PRD_Backend.pdf` for the full brief.
 
-Stack: Node 24 running TypeScript directly (no build step), Express 5, built-in `node:sqlite`
-(no native modules to compile on the demo laptop), zod for request validation.
+Stack: Node 24 running TypeScript directly (no build step), Express 5, zod for request validation.
+Storage is MongoDB when `MONGO_URI` is set (Render, whose disk is wiped on deploy), otherwise the
+built-in `node:sqlite` file at `DB_PATH` (offline demo laptop, tests). Both sit behind one `Store`
+interface; a job is stored with its events and claim so every transition is one atomic,
+status-conditional write.
 
 ## Run
 
@@ -16,6 +19,7 @@ npm start            # same without watch
 npm run demo         # in another terminal: book → quote → pay → confirm ×2 → payout code
 npm run demo:claim   # book → quote → pay → claim
 npm test             # API + unit tests on an in-memory DB
+                     # (set MONGO_TEST_URI to also run the store tests against MongoDB)
 npm run typecheck
 npm run ecobank:token  # check the ECOBANK_* credentials by fetching a sandbox token
 ```
@@ -26,8 +30,14 @@ Both are generated from the same zod schemas the API validates with, and work of
 Config comes from env (or `.env`, see `.env.example`). Rehearse fast with `MOCK_LATENCY_MS=0`, and
 practise recovery with `MOCK_FAIL=pay` (the next collect fails once; `POST /api/demo/reset` re-arms it).
 
-The database is created and seeded on first start: customer **Tunde** (`usr_tunde`), worker
+The database is seeded whenever it starts empty: customer **Tunde** (`usr_tunde`), worker
 **Emeka** (`usr_emeka`, mechanic), and a "Brake repair" job for ₦15,000.
+
+## Deploy (Render)
+
+Web Service with build command `npm ci`, start command `npm start`, health check `/healthz`.
+Env: `HOST=0.0.0.0` (required; the default 127.0.0.1 is unreachable), `NODE_VERSION=24`,
+`MONGO_URI` (so data survives deploys), `CORS_ORIGINS=<frontend URL>`. Render sets `PORT`.
 
 ## API
 
@@ -62,7 +72,7 @@ src/main.ts            wiring, env, server start
 src/config.ts          env parsing and validation
 src/httpapi/           routes, request schemas, error format, CORS
 src/jobs/              state machine, service (lifecycle logic), response shape
-src/store/             SQLite schema/migrations, queries, seed
+src/store/             Store interface; MongoStore and SqliteStore; seed
 src/adapters/          payment/ insurance/ payout/: interface + mock + live each
 scripts/demo.sh        curl walkthrough (the Friday smoke test)
 ```

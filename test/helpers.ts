@@ -8,7 +8,7 @@ import { JobService } from "../src/jobs/service.ts";
 import type { JobView } from "../src/jobs/view.ts";
 import { silentLogger } from "../src/logger.ts";
 import { IN_MEMORY, openDatabase } from "../src/store/db.ts";
-import { Store } from "../src/store/store.ts";
+import { SqliteStore } from "../src/store/sqliteStore.ts";
 
 export interface TestServerOptions {
   modes?: Partial<Modes>;
@@ -35,14 +35,14 @@ export async function startTestServer(options: TestServerOptions = {}): Promise<
   const mockRuntime = new MockRuntime({ latency: { minMs: latency, maxMs: latency }, failOnce: options.failOnce ?? [] });
   const modes: Modes = { payment: "mock", insurance: "mock", payout: "mock", ...options.modes };
   const jobs = new JobService({
-    store: new Store(db),
+    store: new SqliteStore(db),
     adapters: createAdapters({ modes, mockRuntime, logger: silentLogger }),
     logger: silentLogger,
     maxAmountKobo: 50_000_000,
     coverDurationDays: 30,
     onDemoReset: () => mockRuntime.rearm(),
   });
-  const seedJobId = jobs.ensureSeeded()!;
+  const seedJobId = (await jobs.ensureSeeded())!;
 
   const app = createApp({ jobs, logger: silentLogger, corsOrigins: ["http://localhost:3000"] });
   const server = await new Promise<Server>((resolve) => {

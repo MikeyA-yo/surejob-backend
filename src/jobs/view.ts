@@ -1,6 +1,6 @@
-import type { AdapterMode, Modes } from "../adapters/types.ts";
+import type { Modes } from "../adapters/types.ts";
 import type { ClaimReason } from "../adapters/insurance/insurance.ts";
-import type { ClaimRow, EventRow, JobRow, UserRow } from "../store/store.ts";
+import type { JobRecord, UserRecord } from "../store/types.ts";
 import type { JobStatus } from "./stateMachine.ts";
 
 /** The Job shape from the API contract (PRD section 5), plus `quoteId` so a reloaded UI can still pay. */
@@ -34,44 +34,29 @@ export interface QuoteView {
   coverage: string[];
 }
 
-export function toJobView(
-  job: JobRow,
-  customer: UserRow,
-  worker: UserRow,
-  claim: ClaimRow | undefined,
-  events: EventRow[],
-): JobView {
-  const premium = job.premium_kobo;
+export function toJobView(job: JobRecord, customer: UserRecord, worker: UserRecord): JobView {
   return {
     id: job.id,
     title: job.title,
     status: job.status,
-    amountKobo: job.amount_kobo,
-    premiumKobo: premium,
-    totalKobo: job.amount_kobo + (premium ?? 0),
-    quoteId: job.quote_id,
+    amountKobo: job.amountKobo,
+    premiumKobo: job.premiumKobo,
+    totalKobo: job.amountKobo + (job.premiumKobo ?? 0),
+    quoteId: job.quoteId,
     customer: { id: customer.id, name: customer.name },
     worker: { id: worker.id, name: worker.name },
     confirmations: {
-      customer: job.customer_confirmed_at !== null,
-      worker: job.worker_confirmed_at !== null,
+      customer: job.customerConfirmedAt !== null,
+      worker: job.workerConfirmedAt !== null,
     },
-    escrowRef: job.escrow_ref,
-    policyRef: job.policy_ref,
-    claim: claim ? { ref: claim.ref, status: claim.status, reason: claim.reason } : null,
+    escrowRef: job.escrowRef,
+    policyRef: job.policyRef,
+    claim: job.claim ? { ref: job.claim.ref, status: job.claim.status, reason: job.claim.reason } : null,
     payout:
-      job.payout_ref !== null
-        ? { code: job.payout_code, expiresAt: job.payout_expires_at, ref: job.payout_ref }
-        : null,
-    modes: parseModes(job.modes_json),
-    events: events.map((e) => ({ type: e.type, at: e.created_at, detail: e.detail })),
+      job.payoutRef !== null ? { code: job.payoutCode, expiresAt: job.payoutExpiresAt, ref: job.payoutRef } : null,
+    modes: job.modes,
+    events: job.events.map((e) => ({ type: e.type, at: e.at, detail: e.detail })),
   };
-}
-
-export function parseModes(json: string): Modes {
-  const raw = JSON.parse(json) as Partial<Record<keyof Modes, unknown>>;
-  const mode = (value: unknown): AdapterMode => (value === "live" ? "live" : "mock");
-  return { payment: mode(raw.payment), insurance: mode(raw.insurance), payout: mode(raw.payout) };
 }
 
 const naira = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 2 });

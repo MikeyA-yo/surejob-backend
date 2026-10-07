@@ -10,17 +10,17 @@ export function apiRoutes(jobs: JobService): Router {
     res.json({ modes: jobs.modes() });
   });
 
-  router.post("/demo/reset", (_req, res) => {
-    res.json(jobs.resetDemo());
+  router.post("/demo/reset", async (_req, res) => {
+    res.json(await jobs.resetDemo());
   });
 
-  router.post("/jobs", (req, res) => {
+  router.post("/jobs", async (req, res) => {
     const body = parseBody(createJobBody, req.body);
-    res.status(201).json(jobs.createJob(body));
+    res.status(201).json(await jobs.createJob(body));
   });
 
-  router.get("/jobs/:id", (req, res) => {
-    res.json(jobs.getJob(req.params.id));
+  router.get("/jobs/:id", async (req, res) => {
+    res.json(await jobs.getJob(req.params.id));
   });
 
   router.post("/jobs/:id/quote", async (req, res) => {
