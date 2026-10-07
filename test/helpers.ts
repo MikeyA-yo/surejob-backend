@@ -23,6 +23,7 @@ export interface ApiResponse<T = any> {
 
 export interface TestServer {
   seedJobId: string;
+  baseUrl: string;
   request<T = any>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>>;
   close(): Promise<void>;
 }
@@ -35,7 +36,7 @@ export async function startTestServer(options: TestServerOptions = {}): Promise<
   const modes: Modes = { payment: "mock", insurance: "mock", payout: "mock", ...options.modes };
   const jobs = new JobService({
     store: new Store(db),
-    adapters: createAdapters(modes, mockRuntime),
+    adapters: createAdapters({ modes, mockRuntime, logger: silentLogger }),
     logger: silentLogger,
     maxAmountKobo: 50_000_000,
     coverDurationDays: 30,
@@ -52,6 +53,7 @@ export async function startTestServer(options: TestServerOptions = {}): Promise<
 
   return {
     seedJobId,
+    baseUrl: base,
     async request(method, path, body) {
       const init: RequestInit = { method };
       if (body !== undefined) {

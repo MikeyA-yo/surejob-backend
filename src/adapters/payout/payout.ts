@@ -8,11 +8,14 @@ export interface IssueTokenInput {
 }
 
 export interface IssueTokenResult {
-  /** Cash-out code shown only on the worker view. */
-  code: string;
+  /**
+   * Cash-out code shown only on the worker view. null when the provider does not return it
+   * (XpressCash's documented response has none; the code reaches the receiver another way).
+   */
+  code: string | null;
   ref: string;
-  /** ISO 8601. */
-  expiresAt: string;
+  /** ISO 8601, or null when the provider does not say. */
+  expiresAt: string | null;
 }
 
 /** Pays the worker out as a cash token. Live target: Ecobank XpressCash Token Service. */

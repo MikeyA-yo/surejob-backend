@@ -17,7 +17,11 @@ npm run demo         # in another terminal: book → quote → pay → confirm �
 npm run demo:claim   # book → quote → pay → claim
 npm test             # API + unit tests on an in-memory DB
 npm run typecheck
+npm run ecobank:token  # check the ECOBANK_* credentials by fetching a sandbox token
 ```
+
+**API docs:** Swagger UI at http://127.0.0.1:8080/docs, raw OpenAPI 3.1 spec at `/openapi.json`.
+Both are generated from the same zod schemas the API validates with, and work offline.
 
 Config comes from env (or `.env`, see `.env.example`). Rehearse fast with `MOCK_LATENCY_MS=0`, and
 practise recovery with `MOCK_FAIL=pay` (the next collect fails once; `POST /api/demo/reset` re-arms it).
@@ -39,7 +43,8 @@ The database is created and seeded on first start: customer **Tunde** (`usr_tund
 | `POST /api/jobs/:id/claim` | `filedBy: party, reason: damage \| injury \| not_done, details?` | Job with `claim` |
 
 Job shape is in `src/jobs/view.ts`. It follows the contract, plus `quoteId` so a reloaded page can
-still pay. `premiumKobo` is `null` until quoted. Errors are always `{ error: { code, message } }`:
+still pay. `premiumKobo` is `null` until quoted. `payout.code` and `payout.expiresAt` are always set
+in mock mode but may be `null` with live XpressCash, whose documented response has neither. Errors are always `{ error: { code, message } }`:
 
 | Status | Codes |
 | --- | --- |
@@ -62,11 +67,20 @@ src/adapters/          payment/ insurance/ payout/: interface + mock + live each
 scripts/demo.sh        curl walkthrough (the Friday smoke test)
 ```
 
-## Wiring a live adapter
+## Live adapters
 
 Each adapter folder has the interface (`payment.ts`, `insurance.ts`, `payout.ts`), the mock, and a
-live class (`ecobank.ts`, `curacel.ts`, `xpresscash.ts`). The live classes are stubs for now: they
-throw an error telling the operator to switch that adapter back to mock. To implement one, fill in its
-methods so they return exactly the interface's result shape, read keys from env (add them to
-`src/config.ts` and `.env.example`), and throw on any provider failure. The service logs the call,
-records a `*.failed` timeline event and returns 502. Never fall back to the mock inside an adapter.
+live class. Rules for live classes: return exactly the interface's shape, read keys from env only,
+throw on any provider failure (the service logs it, records a `*.failed` timeline event and returns
+502), and never fall back to the mock.
+
+| Adapter | Live class | State |
+| --- | --- | --- |
+| Payment | `payment/ecobank.ts` | Stub: waiting on the escrow-collection endpoint |
+| Insurance | `insurance/curacel.ts` | Stub: waiting on Curacel Grow |
+| Payout | `payout/xpresscash.ts` | Implemented against `/corp-token/api/v2/integration/token/generate`; UAT sample account cannot complete a token yet |
+
+Shared Ecobank plumbing lives in `src/adapters/ecobank/`: access tokens (cached, refreshed before
+expiry, one in-flight request per service), request signing (SHA-512 `requestToken`/`secureHash`
+from `ECOBANK_SECRET_KEY`, or fixed sandbox values), and an authenticated client that retries once
+on 401. See `.env.example` for the `ECOBANK_*` settings.

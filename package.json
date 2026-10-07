@@ -14,15 +14,18 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "demo": "bash scripts/demo.sh",
-    "demo:claim": "bash scripts/demo.sh claim"
+    "demo:claim": "bash scripts/demo.sh claim",
+    "ecobank:token": "node --env-file-if-exists=.env scripts/ecobank-token.ts"
   },
   "dependencies": {
     "express": "^5.2.1",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.4",
+    "@types/swagger-ui-express": "^4.1.8",
     "typescript": "^7.0.2"
   }
 }

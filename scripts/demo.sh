@@ -122,6 +122,9 @@ node -e '
   for (const e of job.events) console.log(`   ${e.at.slice(11, 19)}  ${e.type.padEnd(24)} ${e.detail}`);
   const m = job.modes;
   console.log(`   modes used: payment=${m.payment} insurance=${m.insurance} payout=${m.payout}\n`);
-  if (job.payout) console.log(`\x1b[1;32mPAYOUT CODE: ${job.payout.code}\x1b[0m  (ref ${job.payout.ref}, expires ${job.payout.expiresAt})`);
+  if (job.payout) {
+    const code = job.payout.code ?? "not returned by provider";
+    console.log(`\x1b[1;32mPAYOUT CODE: ${code}\x1b[0m  (ref ${job.payout.ref}, expires ${job.payout.expiresAt ?? "unknown"})`);
+  }
   if (job.claim) console.log(`\x1b[1;32mCLAIM FILED: ${job.claim.ref}\x1b[0m  (${job.claim.reason}, ${job.claim.status})`);
 ' "$(api GET "/api/jobs/$JOB_ID")"

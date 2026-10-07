@@ -1,8 +1,10 @@
 import express, { type Express, type RequestHandler } from "express";
+import swaggerUi from "swagger-ui-express";
 import type { JobService } from "../jobs/service.ts";
 import type { Logger } from "../logger.ts";
 import { cors } from "./cors.ts";
 import { errorHandler, notFoundHandler } from "./errors.ts";
+import { openApiDocument } from "./openapi.ts";
 import { apiRoutes } from "./routes.ts";
 
 export interface AppOptions {
@@ -22,6 +24,14 @@ export function createApp({ jobs, logger, corsOrigins }: AppOptions): Express {
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true });
   });
+
+  // API docs: raw spec, and Swagger UI served from node_modules (works offline).
+  const spec = openApiDocument();
+  app.get("/openapi.json", (_req, res) => {
+    res.json(spec);
+  });
+  app.use("/docs", swaggerUi.serve, swaggerUi.setup(spec, { customSiteTitle: "SureJob API docs" }));
+
   app.use("/api", apiRoutes(jobs));
 
   app.use(notFoundHandler);

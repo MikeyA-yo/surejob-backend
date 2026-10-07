@@ -40,8 +40,8 @@ describe("happy path", () => {
 
     const second = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`, { party: "worker" });
     assert.equal(second.body.status, "PAID_OUT");
-    assert.match(second.body.payout!.code, /^\d{8}$/);
-    assert.ok(Date.parse(second.body.payout!.expiresAt) > Date.now());
+    assert.match(second.body.payout!.code!, /^\d{8}$/);
+    assert.ok(Date.parse(second.body.payout!.expiresAt!) > Date.now());
 
     for (const party of ["worker", "customer"]) {
       const again = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`, { party });
@@ -60,7 +60,7 @@ describe("happy path", () => {
       "job.confirmed",
       "payout.issued",
     ]);
-    assert.ok(!final.body.events.some((e) => e.detail.includes(second.body.payout!.code)), "code must not leak into the timeline");
+    assert.ok(!final.body.events.some((e) => e.detail.includes(second.body.payout!.code!)), "code must not leak into the timeline");
     assert.deepEqual(final.body.modes, { payment: "mock", insurance: "mock", payout: "mock" });
   });
 
@@ -268,5 +268,33 @@ describe("modes and demo support", () => {
 
     assert.equal((await api.request("POST", `/api/jobs/${job.id}/quote`)).status, 502, "MOCK_FAIL re-armed");
     assert.equal((await api.request("POST", `/api/jobs/${job.id}/quote`)).status, 200);
+  });
+});
+
+describe("API docs", () => {
+  it("serves an OpenAPI 3.1 spec covering every endpoint, and Swagger UI", async () => {
+    api = await startTestServer();
+
+    const spec = await api.request("GET", "/openapi.json");
+    assert.equal(spec.status, 200);
+    assert.equal(spec.body.openapi, "3.1.0");
+    const operations = Object.entries(spec.body.paths).flatMap(([path, ops]) =>
+      Object.keys(ops as object).map((method) => `${method.toUpperCase()} ${path}`),
+    );
+    assert.deepEqual(operations.sort(), [
+      "GET /api/config",
+      "GET /api/jobs/{id}",
+      "POST /api/demo/reset",
+      "POST /api/jobs",
+      "POST /api/jobs/{id}/claim",
+      "POST /api/jobs/{id}/confirm",
+      "POST /api/jobs/{id}/pay",
+      "POST /api/jobs/{id}/quote",
+    ]);
+    assert.ok(spec.body.components.schemas.Job);
+
+    const ui = await fetch(`${api.baseUrl}/docs/`);
+    assert.equal(ui.status, 200);
+    assert.match(await ui.text(), /<title>SureJob API docs<\/title>/);
   });
 });

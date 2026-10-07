@@ -20,7 +20,8 @@ export interface JobView {
   escrowRef: string | null;
   policyRef: string | null;
   claim: { ref: string; status: string; reason: ClaimReason } | null;
-  payout: { code: string; expiresAt: string; ref: string } | null;
+  /** Set once paid out. code/expiresAt are always present on mock; live XpressCash may not return them. */
+  payout: { code: string | null; expiresAt: string | null; ref: string } | null;
   /** The mode each adapter actually ran in for this job. */
   modes: Modes;
   events: { type: string; at: string; detail: string }[];
@@ -59,7 +60,7 @@ export function toJobView(
     policyRef: job.policy_ref,
     claim: claim ? { ref: claim.ref, status: claim.status, reason: claim.reason } : null,
     payout:
-      job.payout_ref !== null && job.payout_code !== null && job.payout_expires_at !== null
+      job.payout_ref !== null
         ? { code: job.payout_code, expiresAt: job.payout_expires_at, ref: job.payout_ref }
         : null,
     modes: parseModes(job.modes_json),

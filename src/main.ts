@@ -16,12 +16,16 @@ function main(): void {
   const mockRuntime = new MockRuntime(config.mock);
   const jobs = new JobService({
     store: new Store(db),
-    adapters: createAdapters(config.modes, mockRuntime),
+    adapters: createAdapters({ modes: config.modes, mockRuntime, logger: log, ecobank: config.ecobank }),
     logger: log,
     maxAmountKobo: config.jobs.maxAmountKobo,
     coverDurationDays: config.jobs.coverDurationDays,
     onDemoReset: () => mockRuntime.rearm(),
   });
+
+  if (config.ecobank?.signing.kind === "static" && (config.modes.payment === "live" || config.modes.payout === "live")) {
+    log.warn("ecobank requests use fixed requestToken/secureHash (no ECOBANK_SECRET_KEY); sandbox only");
+  }
 
   const seededJobId = jobs.ensureSeeded();
   if (seededJobId) log.info("seeded fresh database", { jobId: seededJobId });

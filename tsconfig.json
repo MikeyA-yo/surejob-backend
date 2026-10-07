@@ -1,6 +1,6 @@
 {
   // Source runs directly on Node 24 (type stripping), so only erasable syntax is allowed.
-  // This config type-checks src and test; tsconfig.build.json emits dist/.
+  // This config type-checks src, test and scripts; tsconfig.build.json emits dist/.
   "compilerOptions": {
     "noEmit": true,
 
@@ -29,5 +29,5 @@
     "sourceMap": true,
     "skipLibCheck": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "scripts"]
 }
