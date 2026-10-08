@@ -5,11 +5,12 @@ import type { AdapterName, Modes } from "../adapters/types.ts";
 import type { ClaimReason } from "../adapters/insurance/insurance.ts";
 import { DomainError, errorMessage } from "../errors.ts";
 import type { Logger } from "../logger.ts";
-import { SEED_CUSTOMER, SEED_JOB, SEED_WORKER } from "../store/seed.ts";
+import { hashPassword } from "../auth/passwords.ts";
+import { SEED_CUSTOMER, SEED_JOB, SEED_PASSWORD, SEED_WORKER } from "../store/seed.ts";
 import type { ClaimRecord, EventRecord, JobPatch, JobRecord, Party, Store, UserRecord } from "../store/types.ts";
 import { KeyedMutex } from "./keyedMutex.ts";
 import { nextStatus, type JobAction } from "./stateMachine.ts";
-import { formatNaira, toJobView, type JobView, type QuoteView } from "./view.ts";
+import { formatNaira, isOnPlatform, toJobView, type JobView, type QuoteView } from "./view.ts";
 
 export interface JobServiceOptions {
   store: Store;
@@ -22,17 +23,37 @@ export interface JobServiceOptions {
   now?: () => Date;
 }
 
+/** A worker the customer adds at booking time because they have no SureJob account. */
+export interface NewWorkerInput {
+  name: string;
+  phone: string;
+  trade?: string | undefined;
+}
+
 export interface CreateJobInput {
+  title: string;
+  amountKobo: number;
+  /** Exactly one of workerId (a registered worker) or newWorker. */
+  workerId?: string | undefined;
+  newWorker?: NewWorkerInput | undefined;
+}
+
+export interface FileClaimInput {
+  reason: ClaimReason;
+  details: string;
+}
+
+interface JobDraft {
   customerId: string;
   workerId: string;
   title: string;
   amountKobo: number;
 }
 
-export interface FileClaimInput {
-  filedBy: Party;
-  reason: ClaimReason;
-  details: string;
+export interface WorkerSummary {
+  id: string;
+  name: string;
+  trade: string | null;
 }
 
 interface EventInput {
@@ -86,26 +107,60 @@ export class JobService {
     return adapterModes(this.#adapters);
   }
 
-  /** Seeds the demo data on an empty database. Returns the seeded job id, or null if data already exists. */
+  /**
+   * Seeds the demo data when the demo customer account is missing: an empty database, or one
+   * seeded before accounts existed. Returns the seeded job id, or null if nothing was needed.
+   */
   async ensureSeeded(): Promise<string | null> {
-    return (await this.#store.hasUsers()) ? null : (await this.resetDemo()).jobId;
+    const seeded = await this.#store.getUserByEmail(SEED_CUSTOMER.email!);
+    return seeded?.passwordHash ? null : (await this.resetDemo()).jobId;
   }
 
-  /** Wipes everything and restores exactly the seed: Tunde, Emeka, and the "Brake repair" job. */
+  /**
+   * Wipes everything and restores exactly the seed: Tunde and Emeka (both log in with SEED_PASSWORD)
+   * and the "Brake repair" job.
+   */
   async resetDemo(): Promise<{ jobId: string }> {
+    const passwordHash = await hashPassword(SEED_PASSWORD);
     const job = this.#newJob({
       customerId: SEED_CUSTOMER.id,
       workerId: SEED_WORKER.id,
       title: SEED_JOB.title,
       amountKobo: SEED_JOB.amountKobo,
     });
-    await this.#store.reset([SEED_CUSTOMER, SEED_WORKER], job);
+    await this.#store.reset([{ ...SEED_CUSTOMER, passwordHash }, { ...SEED_WORKER, passwordHash }], job);
     this.#onDemoReset?.();
     this.#log.info("demo reset", { jobId: job.id, store: this.#store.kind });
     return { jobId: job.id };
   }
 
-  async createJob(input: CreateJobInput): Promise<JobView> {
+  /** Registered workers a customer can book. */
+  async listWorkers(): Promise<WorkerSummary[]> {
+    return (await this.#store.listWorkers()).map((w) => ({ id: w.id, name: w.name, trade: w.trade }));
+  }
+
+  /** The actor's jobs (as customer or worker), newest first. */
+  async listJobs(actor: UserRecord): Promise<JobView[]> {
+    const jobs = await this.#store.listJobsForUser(actor.id);
+    const users = new Map<string, Promise<UserRecord>>();
+    const user = (id: string) => {
+      if (!users.has(id)) users.set(id, this.#requireUser(id));
+      return users.get(id)!;
+    };
+    return Promise.all(
+      jobs.map(async (job) => toJobView(job, await user(job.customerId), await user(job.workerId), sideOf(job, actor))),
+    );
+  }
+
+  /**
+   * Books a job for the logged-in customer, with either a registered worker or a new worker the
+   * customer adds (no account; they are paid by cash token on their phone).
+   */
+  async createJob(actor: UserRecord, input: CreateJobInput): Promise<JobView> {
+    if (actor.role !== "customer") throw new DomainError("FORBIDDEN", "only customers can book jobs");
+    if ((input.workerId === undefined) === (input.newWorker === undefined)) {
+      throw new DomainError("VALIDATION_ERROR", "give exactly one of workerId or newWorker");
+    }
     const title = input.title.trim();
     if (title === "") throw new DomainError("VALIDATION_ERROR", "title must not be empty");
     if (!Number.isSafeInteger(input.amountKobo) || input.amountKobo <= 0) {
@@ -117,25 +172,46 @@ export class JobService {
         `amountKobo must not exceed ${this.#maxAmountKobo} (${formatNaira(this.#maxAmountKobo)})`,
       );
     }
-    const [customer, worker] = await Promise.all([
-      this.#requireUserWithRole(input.customerId, "customer", "customerId"),
-      this.#requireUserWithRole(input.workerId, "worker", "workerId"),
-    ]);
+    let worker: UserRecord;
+    if (input.newWorker) {
+      worker = {
+        id: newId("usr"),
+        name: input.newWorker.name.trim(),
+        role: "worker",
+        phone: input.newWorker.phone,
+        trade: input.newWorker.trade?.trim() || null,
+        email: null,
+        passwordHash: null,
+      };
+      await this.#store.insertUser(worker);
+      this.#log.info("off-platform worker added", { workerId: worker.id, by: actor.id });
+    } else {
+      worker = await this.#requireUserWithRole(input.workerId!, "worker", "workerId");
+    }
 
-    const job = this.#newJob({ ...input, title });
+    const job = this.#newJob({ customerId: actor.id, workerId: worker.id, title, amountKobo: input.amountKobo });
+    if (!isOnPlatform(worker)) {
+      job.events.push({
+        type: "worker.added",
+        at: job.createdAt,
+        detail: `${worker.name} is not on SureJob; added by ${actor.name}. Payout goes to their phone.`,
+      });
+    }
     await this.#store.insertJob(job);
     this.#log.info("transition", { jobId: job.id, action: "book", from: null, to: "BOOKED" });
-    return toJobView(job, customer, worker);
+    return toJobView(job, actor, worker, "customer");
   }
 
-  async getJob(jobId: string): Promise<JobView> {
-    return this.#view(await this.#requireJob(jobId));
+  async getJob(actor: UserRecord, jobId: string): Promise<JobView> {
+    const job = await this.#requireJob(jobId);
+    return this.#view(job, sideOf(job, actor));
   }
 
   /** BOOKED → BOOKED. Re-quoting replaces the previous quote. */
-  async quote(jobId: string): Promise<QuoteView> {
+  async quote(actor: UserRecord, jobId: string): Promise<QuoteView> {
     return this.#locks.run(jobId, async () => {
       const job = await this.#requireJob(jobId);
+      requireCustomerOf(job, actor);
       nextStatus(job.status, "quote");
       const worker = await this.#requireUser(job.workerId);
 
@@ -166,11 +242,12 @@ export class JobService {
    * BOOKED → ESCROWED → INSURED in one request. Safe to retry: on an ESCROWED job only the
    * policy step runs again (never a second charge), and a replay on INSURED is a no-op.
    */
-  async pay(jobId: string, quoteId: string): Promise<JobView> {
+  async pay(actor: UserRecord, jobId: string, quoteId: string): Promise<JobView> {
     return this.#locks.run(jobId, async () => {
       let job = await this.#requireJob(jobId);
+      requireCustomerOf(job, actor);
 
-      if (job.status === "INSURED" && job.quoteId === quoteId) return this.#view(job);
+      if (job.status === "INSURED" && job.quoteId === quoteId) return this.#view(job, "customer");
       if (job.status !== "BOOKED" && job.status !== "ESCROWED") {
         throw new DomainError("INVALID_TRANSITION", `cannot pay for a job that is ${job.status}`);
       }
@@ -198,32 +275,38 @@ export class JobService {
         usedAdapter: "insurance",
       });
 
-      return this.#view(job);
+      return this.#view(job, "customer");
     });
   }
 
   /**
-   * Records one party's confirmation. The second confirmation moves INSURED → CONFIRMED and
-   * immediately pays out (→ PAID_OUT). Repeat confirmations are no-ops. If the payout call
-   * fails the job stays CONFIRMED, and any further confirm retries the payout.
+   * Records the actor's confirmation. Normally the second confirmation moves INSURED → CONFIRMED and
+   * immediately pays out (→ PAID_OUT). When the worker is not on the platform (no account, so they
+   * cannot confirm), the customer's confirmation alone does it. Repeat confirmations are no-ops. If
+   * the payout call fails the job stays CONFIRMED, and any further confirm retries the payout.
    */
-  async confirm(jobId: string, party: Party): Promise<JobView> {
+  async confirm(actor: UserRecord, jobId: string): Promise<JobView> {
     return this.#locks.run(jobId, async () => {
       let job = await this.#requireJob(jobId);
+      const party = sideOf(job, actor);
 
       switch (job.status) {
         case "PAID_OUT":
-          return this.#view(job);
+          return this.#view(job, party);
         case "INSURED": {
+          const worker = await this.#requireUser(job.workerId);
+          const workerOnPlatform = isOnPlatform(worker);
           const self = isConfirmedBy(job, party);
-          const other = isConfirmedBy(job, party === "customer" ? "worker" : "customer");
-          if (self && !other) return this.#view(job);
+          // An off-platform worker cannot confirm, so the customer's word completes the job.
+          const complete = workerOnPlatform ? isConfirmedBy(job, party === "customer" ? "worker" : "customer") : true;
+          if (self && !complete) return this.#view(job, party);
 
           const recorded: EventInput = { type: "confirmation.recorded", detail: `${capitalize(party)} confirmed the job is done` };
-          const confirmedAt: JobPatch = party === "customer" ? { customerConfirmedAt: this.#timestamp() } : { workerConfirmedAt: this.#timestamp() };
+          const confirmedAt: JobPatch =
+            party === "customer" ? { customerConfirmedAt: this.#timestamp() } : { workerConfirmedAt: this.#timestamp() };
 
-          if (!other) {
-            // First confirmation: recorded, no status change.
+          if (!complete) {
+            // First of two confirmations: recorded, no status change.
             const updated = await this.#store.updateJob(job.id, {
               expectStatus: "INSURED",
               set: confirmedAt,
@@ -231,13 +314,16 @@ export class JobService {
             });
             if (!updated) throw await this.#staleJob(job.id);
             this.#log.info("confirmation", { jobId, party });
-            return this.#view(updated);
+            return this.#view(updated, party);
           }
 
-          // Second confirmation: record it and move to CONFIRMED in one write.
+          // Final confirmation: record it and move to CONFIRMED in one write.
+          const confirmedDetail = workerOnPlatform
+            ? "Both parties confirmed; releasing payout"
+            : `Customer confirmed; ${worker.name} is not on SureJob, so this releases the payout`;
           job = await this.#transition(job, "confirm", {
             set: self ? {} : confirmedAt,
-            events: [...(self ? [] : [recorded]), { type: "job.confirmed", detail: "Both parties confirmed; releasing payout" }],
+            events: [...(self ? [] : [recorded]), { type: "job.confirmed", detail: confirmedDetail }],
           });
           break;
         }
@@ -247,14 +333,15 @@ export class JobService {
           throw new DomainError("INVALID_TRANSITION", `cannot confirm a job that is ${job.status}`);
       }
 
-      return this.#view(await this.#payOut(job));
+      return this.#view(await this.#payOut(job), party);
     });
   }
 
   /** INSURED or CONFIRMED → CLAIM_FILED. Payout is held from then on. */
-  async fileClaim(jobId: string, input: FileClaimInput): Promise<JobView> {
+  async fileClaim(actor: UserRecord, jobId: string, input: FileClaimInput): Promise<JobView> {
     return this.#locks.run(jobId, async () => {
       const job = await this.#requireJob(jobId);
+      const filedBy = sideOf(job, actor);
       nextStatus(job.status, "claim");
       const policyRef = job.policyRef;
       if (policyRef === null) throw new Error(`job ${jobId} is ${job.status} but has no policyRef`);
@@ -267,13 +354,13 @@ export class JobService {
         events: [
           {
             type: "claim.filed",
-            detail: `${capitalize(input.filedBy)} filed a ${CLAIM_REASON_LABELS[input.reason]} claim (${claim.claimRef}); payout is on hold`,
+            detail: `${capitalize(filedBy)} filed a ${CLAIM_REASON_LABELS[input.reason]} claim (${claim.claimRef}); payout is on hold`,
           },
         ],
         usedAdapter: "insurance",
         claim: {
           id: newId("clm"),
-          filedBy: input.filedBy,
+          filedBy,
           reason: input.reason,
           details: input.details,
           ref: claim.claimRef,
@@ -281,13 +368,13 @@ export class JobService {
           createdAt: this.#timestamp(),
         },
       });
-      return this.#view(updated);
+      return this.#view(updated, filedBy);
     });
   }
 
   // ---------------------------------------------------------------------------
 
-  #newJob(input: CreateJobInput): JobRecord {
+  #newJob(input: JobDraft): JobRecord {
     const createdAt = this.#timestamp();
     return {
       id: newId("job"),
@@ -385,9 +472,9 @@ export class JobService {
       : new DomainError("NOT_FOUND", `job ${jobId} not found`);
   }
 
-  async #view(job: JobRecord): Promise<JobView> {
+  async #view(job: JobRecord, viewer: Party): Promise<JobView> {
     const [customer, worker] = await Promise.all([this.#requireUser(job.customerId), this.#requireUser(job.workerId)]);
-    return toJobView(job, customer, worker);
+    return toJobView(job, customer, worker, viewer);
   }
 
   async #requireJob(jobId: string): Promise<JobRecord> {
@@ -426,6 +513,17 @@ function requireMatchingQuote(job: JobRecord, quoteId: string): number {
     throw new DomainError("QUOTE_MISMATCH", "quoteId does not match the latest quote for this job");
   }
   return job.premiumKobo;
+}
+
+/** Which side of the job the actor is on; FORBIDDEN if they are not part of it. */
+function sideOf(job: JobRecord, actor: UserRecord): Party {
+  if (actor.id === job.customerId) return "customer";
+  if (actor.id === job.workerId) return "worker";
+  throw new DomainError("FORBIDDEN", "you are not part of this job");
+}
+
+function requireCustomerOf(job: JobRecord, actor: UserRecord): void {
+  if (sideOf(job, actor) !== "customer") throw new DomainError("FORBIDDEN", "only the customer can do this");
 }
 
 function isConfirmedBy(job: JobRecord, party: Party): boolean {

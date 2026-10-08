@@ -1,41 +1,56 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useRole } from "@/context/RoleContext";
-import { ChevronLeft } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronLeft, LogOut } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { getConfig, type Modes } from "@/api";
 
 interface AppShellProps {
   children: React.ReactNode;
-  bottomAction: React.ReactNode;
+  bottomAction?: React.ReactNode;
   backHref?: string;
 }
 
-export default function AppShell({
-  children,
-  bottomAction,
-  backHref,
-}: AppShellProps) {
-  const { role, setRole } = useRole();
+/** Fetched once per page load; the badge reflects what the backend is actually configured to use. */
+let modesPromise: Promise<Modes> | null = null;
+
+function modeLabel(modes: Modes | null): string {
+  if (!modes) return "Mode: …";
+  const values = Object.values(modes);
+  if (values.every((m) => m === "mock")) return "Mode: Simulated";
+  if (values.every((m) => m === "live")) return "Mode: Sandbox";
+  return "Mode: Mixed";
+}
+
+/** Mobile frame for every app screen. Sends logged-out visitors to /login. */
+export default function AppShell({ children, bottomAction, backHref }: AppShellProps) {
+  const { user, loading, logout } = useAuth();
+  const router = useRouter();
   const pathname = usePathname();
+  const [modes, setModes] = useState<Modes | null>(null);
+
+  useEffect(() => {
+    if (!loading && !user) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+  }, [loading, user, router, pathname]);
+
+  useEffect(() => {
+    modesPromise ??= getConfig();
+    modesPromise.then(setModes).catch(() => {
+      modesPromise = null;
+    });
+  }, []);
 
   const screens = [
-    { label: "Home", href: "/" },
-    { label: "Book", href: "/book" },
-    { label: "Pay", href: "/job/1/pay" },
-    { label: "Status", href: "/job/1" },
-    { label: "Payout", href: "/job/1/payout" },
-    { label: "Claim", href: "/job/1/claim" },
+    { label: "My jobs", href: "/jobs" },
+    ...(user?.role === "customer" ? [{ label: "Book", href: "/book" }] : []),
   ];
 
   return (
     <div className="min-h-screen bg-neutral-100 flex justify-center text-[#14232B]">
-      {/* Mobile Shell Constraint: max-w-[420px] */}
       <div className="w-full max-w-[420px] min-h-screen bg-white flex flex-col relative">
-        {/* Header - Completely Borderless, Clean Contrast */}
         <header className="px-6 pt-6 pb-2 shrink-0">
-          {/* Top Row: Brand & Simulated Badge */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {backHref && (
@@ -53,53 +68,39 @@ export default function AppShell({
             </div>
 
             <span className="text-xs font-normal text-[#0B3C4F] bg-[#EEF4F6] px-2.5 py-1 rounded-full">
-              Mode: Simulated
+              {modeLabel(modes)}
             </span>
           </div>
 
-          {/* Role Switcher Pill */}
-          <div className="flex items-center justify-between mt-4">
-            <span className="text-xs font-normal text-[#14232B] opacity-60">
-              Role
-            </span>
-            <div className="inline-flex bg-[#EEF4F6] rounded-full p-1 text-xs">
+          {user && (
+            <div className="flex items-center justify-between mt-4">
+              <span className="text-xs text-[#14232B]">
+                <span className="opacity-60">Signed in as </span>
+                <strong className="font-bold text-[#0B3C4F]">{user.name}</strong>
+                <span className="opacity-60"> · {user.role === "customer" ? "Customer" : "Worker"}</span>
+              </span>
               <button
                 type="button"
-                onClick={() => setRole("customer")}
-                className={`px-3 py-1 rounded-full transition-colors ${
-                  role === "customer"
-                    ? "bg-[#0B3C4F] text-white font-bold"
-                    : "text-[#14232B] font-normal"
-                }`}
+                onClick={() => {
+                  logout();
+                  router.replace("/login");
+                }}
+                className="inline-flex items-center gap-1 text-xs text-[#0B3C4F] bg-[#EEF4F6] px-2.5 py-1 rounded-full"
               >
-                Customer
-              </button>
-              <button
-                type="button"
-                onClick={() => setRole("worker")}
-                className={`px-3 py-1 rounded-full transition-colors ${
-                  role === "worker"
-                    ? "bg-[#0B3C4F] text-white font-bold"
-                    : "text-[#14232B] font-normal"
-                }`}
-              >
-                Worker
+                <LogOut className="size-3" /> Log out
               </button>
             </div>
-          </div>
+          )}
 
-          {/* Quick Prototype Screen Switcher */}
           <nav className="flex items-center gap-2 mt-4 overflow-x-auto pb-1 text-xs">
-            {screens.map((s, idx) => {
+            {screens.map((s) => {
               const active = pathname === s.href;
               return (
                 <Link
-                  key={idx}
+                  key={s.href}
                   href={s.href}
                   className={`px-2.5 py-1 rounded-full whitespace-nowrap transition-colors ${
-                    active
-                      ? "bg-[#0B3C4F] text-white font-bold"
-                      : "bg-[#EEF4F6] text-[#14232B] font-normal"
+                    active ? "bg-[#0B3C4F] text-white font-bold" : "bg-[#EEF4F6] text-[#14232B] font-normal"
                   }`}
                 >
                   {s.label}
@@ -109,15 +110,15 @@ export default function AppShell({
           </nav>
         </header>
 
-        {/* Scrollable Content Body with Generous Whitespace */}
         <main className="flex-1 px-6 pt-4 pb-28">
-          {children}
+          {loading || !user ? <p className="text-sm text-[#14232B] opacity-60">Loading…</p> : children}
         </main>
 
-        {/* The Anti-Gravity Button: Borderless, Chunky h-12, Anchored to Bottom */}
-        <div className="fixed bottom-0 left-0 right-0 max-w-[420px] mx-auto p-6 bg-white/95 backdrop-blur-xs z-30">
-          {bottomAction}
-        </div>
+        {bottomAction && user && (
+          <div className="fixed bottom-0 left-0 right-0 max-w-[420px] mx-auto p-6 bg-white/95 backdrop-blur-xs z-30">
+            {bottomAction}
+          </div>
+        )}
       </div>
     </div>
   );

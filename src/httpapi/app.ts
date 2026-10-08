@@ -1,5 +1,6 @@
 import express, { type Express, type RequestHandler } from "express";
 import swaggerUi from "swagger-ui-express";
+import type { AuthService } from "../auth/service.ts";
 import type { JobService } from "../jobs/service.ts";
 import type { Logger } from "../logger.ts";
 import { cors } from "./cors.ts";
@@ -9,11 +10,12 @@ import { apiRoutes } from "./routes.ts";
 
 export interface AppOptions {
   jobs: JobService;
+  auth: AuthService;
   logger: Logger;
   corsOrigins: readonly string[];
 }
 
-export function createApp({ jobs, logger, corsOrigins }: AppOptions): Express {
+export function createApp({ jobs, auth, logger, corsOrigins }: AppOptions): Express {
   const app = express();
   app.disable("x-powered-by");
 
@@ -32,7 +34,7 @@ export function createApp({ jobs, logger, corsOrigins }: AppOptions): Express {
   });
   app.use("/docs", swaggerUi.serve, swaggerUi.setup(spec, { customSiteTitle: "SureJob API docs" }));
 
-  app.use("/api", apiRoutes(jobs));
+  app.use("/api", apiRoutes({ jobs, auth }));
 
   app.use(notFoundHandler);
   app.use(errorHandler(logger));

@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { CLAIM_REASONS } from "../adapters/insurance/insurance.ts";
+import type { AuthResult } from "../auth/service.ts";
+import type { WorkerSummary } from "../jobs/service.ts";
 import { JOB_STATUSES } from "../jobs/stateMachine.ts";
 import type { JobView, QuoteView } from "../jobs/view.ts";
-import { claimBody, confirmBody, createJobBody, payBody } from "./schemas.ts";
+import { claimBody, createJobBody, loginBody, newWorkerBody, payBody, registerBody } from "./schemas.ts";
 
 // ---------------------------------------------------------------------------
 // Response schemas. These exist only for the docs; the compile-time checks below
@@ -10,6 +12,7 @@ import { claimBody, confirmBody, createJobBody, payBody } from "./schemas.ts";
 // ---------------------------------------------------------------------------
 
 const mode = z.enum(["mock", "live"]);
+const party = z.enum(["customer", "worker"]);
 
 const modes = z
   .object({ payment: mode, insurance: mode, payout: mode })
@@ -21,11 +24,35 @@ const modes = z
 const jobStatus = z.enum(JOB_STATUSES).meta({
   id: "JobStatus",
   description:
-    "BOOKED → (quote, pay) → ESCROWED → INSURED → (both confirm) → CONFIRMED → PAID_OUT. " +
+    "BOOKED → (quote, pay) → ESCROWED → INSURED → (confirmations) → CONFIRMED → PAID_OUT. " +
     "INSURED or CONFIRMED → (claim) → CLAIM_FILED. CONFIRMED is transient: payout fires immediately.",
 });
 
-const person = z.object({ id: z.string(), name: z.string() });
+const user = z
+  .object({
+    id: z.string().meta({ example: "usr_tunde" }),
+    name: z.string().meta({ example: "Tunde" }),
+    email: z.string().nullable().meta({ example: "tunde@example.com" }),
+    role: party,
+    phone: z.string().meta({ example: "+2348030000001" }),
+    trade: z.string().nullable().meta({ example: null }),
+  })
+  .meta({ id: "User" });
+
+const authResponse = z
+  .object({
+    token: z.string().meta({ description: "Send as `Authorization: Bearer <token>`.", example: "eyJhbGciOiJIUzI1NiJ9…" }),
+    user,
+  })
+  .meta({ id: "AuthResponse" });
+
+const workerSummary = z
+  .object({
+    id: z.string().meta({ example: "usr_emeka" }),
+    name: z.string().meta({ example: "Emeka" }),
+    trade: z.string().nullable().meta({ example: "mechanic" }),
+  })
+  .meta({ id: "WorkerSummary" });
 
 const jobEvent = z
   .object({
@@ -44,8 +71,15 @@ const job = z
     premiumKobo: z.number().int().nullable().meta({ description: "null until quoted.", example: 30_000 }),
     totalKobo: z.number().int().meta({ description: "amountKobo + premiumKobo (premium counts as 0 until quoted).", example: 1_530_000 }),
     quoteId: z.string().nullable().meta({ description: "Latest quote; pass it to /pay.", example: "QTE-7KQ2M9XA" }),
-    customer: person,
-    worker: person,
+    customer: z.object({ id: z.string(), name: z.string() }),
+    worker: z.object({
+      id: z.string(),
+      name: z.string(),
+      onPlatform: z.boolean().meta({
+        description: "false: added by the customer, no account. The customer's confirmation alone releases the payout.",
+      }),
+    }),
+    you: party.meta({ description: "The viewer's side of this job." }),
     confirmations: z.object({ customer: z.boolean(), worker: z.boolean() }),
     escrowRef: z.string().nullable().meta({ example: "ESC-7KQ2M9XA" }),
     policyRef: z.string().nullable().meta({ example: "POL-4HN8QW2C" }),
@@ -58,12 +92,16 @@ const job = z
       .nullable(),
     payout: z
       .object({
-        code: z.string().nullable().meta({ description: "Cash-out code. Show on the worker view only.", example: "47852170" }),
+        code: z.string().nullable().meta({
+          description:
+            "Cash-out code. Only returned to the worker, or to the customer when the worker is not on the platform; otherwise null.",
+          example: "47852170",
+        }),
         expiresAt: z.string().nullable().meta({ example: "2026-10-10T10:00:00.000Z" }),
         ref: z.string().meta({ example: "XPC-PKS5BEPQ" }),
       })
       .nullable()
-      .meta({ description: "Set once PAID_OUT. code and expiresAt are always present in mock mode." }),
+      .meta({ description: "Set once PAID_OUT." }),
     modes: modes.meta({ description: "The mode each adapter actually ran in for this job." }),
     events: z.array(jobEvent),
   })
@@ -91,14 +129,17 @@ const apiError = z
   .meta({ id: "Error" });
 
 const configResponse = z.object({ modes }).meta({ id: "Config" });
-const resetResponse = z
-  .object({ jobId: z.string().meta({ example: "job_3f9c2a1b7d4e5f60" }) })
-  .meta({ id: "DemoReset" });
+const resetResponse = z.object({ jobId: z.string().meta({ example: "job_3f9c2a1b7d4e5f60" }) }).meta({ id: "DemoReset" });
+const meResponse = z.object({ user }).meta({ id: "Me" });
+const workerList = z.object({ workers: z.array(workerSummary) }).meta({ id: "WorkerList" });
+const jobList = z.object({ jobs: z.array(job) }).meta({ id: "JobList" });
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Assert<T extends true> = T;
 export type JobDocsMatchJobView = Assert<Same<z.output<typeof job>, JobView>>;
 export type QuoteDocsMatchQuoteView = Assert<Same<z.output<typeof quote>, QuoteView>>;
+export type AuthDocsMatchAuthResult = Assert<Same<z.output<typeof authResponse>, AuthResult>>;
+export type WorkerDocsMatchWorkerSummary = Assert<Same<z.output<typeof workerSummary>, WorkerSummary>>;
 
 // ---------------------------------------------------------------------------
 // Document
@@ -117,7 +158,12 @@ const jobIdParam = {
   example: "job_3f9c2a1b7d4e5f60",
 };
 
+/** Marks an operation as public (overrides the document-wide bearer requirement). */
+const PUBLIC = { security: [] };
+
+const unauthorized = fail("UNAUTHORIZED: missing, invalid or expired token. Log in again.");
 const notFound = fail("NOT_FOUND: no job with this id.");
+const forbiddenJob = fail("FORBIDDEN: you are not part of this job, or your side of it cannot do this.");
 const adapterFailed = fail(
   "ADAPTER_ERROR: the provider call failed. The job stays where it was; send the same request again to retry.",
 );
@@ -125,6 +171,7 @@ const adapterFailed = fail(
 const paths = {
   "/api/config": {
     get: {
+      ...PUBLIC,
       tags: ["Demo"],
       summary: "Adapter modes",
       description: "Which adapters run on mock or live right now. Set by PAYMENT_MODE, INSURANCE_MODE, PAYOUT_MODE.",
@@ -133,22 +180,80 @@ const paths = {
   },
   "/api/demo/reset": {
     post: {
+      ...PUBLIC,
       tags: ["Demo"],
       summary: "Reset demo data",
       description:
-        "Deletes everything and restores the seed: customer Tunde (usr_tunde), worker Emeka (usr_emeka, mechanic), " +
-        'and a BOOKED "Brake repair" job for ₦15,000. Also re-arms MOCK_FAIL failure drills.',
+        "Deletes every user and job and restores the seed: customer Tunde (tunde@example.com) and worker Emeka " +
+        '(emeka@example.com, mechanic), both with password "password123", and a BOOKED "Brake repair" job for ₦15,000. ' +
+        "Registered accounts are removed too. Also re-arms MOCK_FAIL failure drills.",
       responses: { 200: ok("The new seed job id.", "DemoReset") },
     },
   },
+  "/api/auth/register": {
+    post: {
+      ...PUBLIC,
+      tags: ["Auth"],
+      summary: "Create an account",
+      requestBody: { required: true, content: jsonBody("RegisterRequest") },
+      responses: {
+        201: ok("Logged in as the new user.", "AuthResponse"),
+        400: fail("VALIDATION_ERROR: bad email, short password, bad phone, unknown role."),
+        409: fail("EMAIL_TAKEN: an account with this email exists."),
+      },
+    },
+  },
+  "/api/auth/login": {
+    post: {
+      ...PUBLIC,
+      tags: ["Auth"],
+      summary: "Log in",
+      requestBody: { required: true, content: jsonBody("LoginRequest") },
+      responses: {
+        200: ok("A bearer token and the user.", "AuthResponse"),
+        400: fail("VALIDATION_ERROR: email or password missing."),
+        401: fail("INVALID_CREDENTIALS: email or password is incorrect."),
+      },
+    },
+  },
+  "/api/auth/me": {
+    get: {
+      tags: ["Auth"],
+      summary: "Current user",
+      responses: { 200: ok("The logged-in user.", "Me"), 401: unauthorized },
+    },
+  },
+  "/api/workers": {
+    get: {
+      tags: ["Jobs"],
+      summary: "Registered workers",
+      description: "Workers with an account, for the booking screen. A worker who is not listed can be added with newWorker.",
+      responses: { 200: ok("Workers by name.", "WorkerList"), 401: unauthorized },
+    },
+  },
   "/api/jobs": {
+    get: {
+      tags: ["Jobs"],
+      summary: "My jobs",
+      description: "Jobs where the logged-in user is the customer or the worker, newest first.",
+      responses: { 200: ok("The jobs.", "JobList"), 401: unauthorized },
+    },
     post: {
       tags: ["Jobs"],
       summary: "Book a job",
+      description:
+        "Customers only; the logged-in user is the customer. Pass workerId for a registered worker, or newWorker " +
+        "(name, phone, trade) to book someone who is not on SureJob: they get an account-less record and are paid by " +
+        "cash token on their phone, and the customer's confirmation alone releases the payout.",
       requestBody: { required: true, content: jsonBody("CreateJobRequest") },
       responses: {
         201: ok("The job, BOOKED.", "Job"),
-        400: fail("VALIDATION_ERROR: bad amount (≤ 0, not whole, over the cap), empty title, unknown user or wrong role."),
+        400: fail(
+          "VALIDATION_ERROR: bad amount (≤ 0, not whole, over the cap), empty title, both or neither of workerId/newWorker, " +
+            "or workerId is not a worker.",
+        ),
+        401: unauthorized,
+        403: fail("FORBIDDEN: only customers can book."),
       },
     },
   },
@@ -158,7 +263,7 @@ const paths = {
       summary: "Get a job",
       description: "Full job, including the event timeline and the modes used. Poll this to refresh the UI.",
       parameters: [jobIdParam],
-      responses: { 200: ok("The job.", "Job"), 404: notFound },
+      responses: { 200: ok("The job.", "Job"), 401: unauthorized, 403: forbiddenJob, 404: notFound },
     },
   },
   "/api/jobs/{id}/quote": {
@@ -166,10 +271,12 @@ const paths = {
       tags: ["Lifecycle"],
       summary: "Quote job cover",
       description:
-        "Gets an insurance quote for a BOOKED job. Status stays BOOKED. Quoting again replaces the previous quote.",
+        "The job's customer gets an insurance quote for a BOOKED job. Status stays BOOKED. Quoting again replaces the previous quote.",
       parameters: [jobIdParam],
       responses: {
         200: ok("The quote.", "Quote"),
+        401: unauthorized,
+        403: forbiddenJob,
         404: notFound,
         409: fail("INVALID_TRANSITION: the job is not BOOKED."),
         502: adapterFailed,
@@ -181,14 +288,16 @@ const paths = {
       tags: ["Lifecycle"],
       summary: "Pay into escrow and insure",
       description:
-        "Collects job amount + premium into escrow (→ ESCROWED), then issues the policy (→ INSURED), in one request. " +
-        "Safe to retry: if the policy step failed, retrying only re-runs that step and never charges twice; " +
+        "The job's customer pays job amount + premium into escrow (→ ESCROWED), then the policy is issued (→ INSURED), " +
+        "in one request. Safe to retry: if the policy step failed, retrying only re-runs that step and never charges twice; " +
         "repeating it on an INSURED job returns the job unchanged.",
       parameters: [jobIdParam],
       requestBody: { required: true, content: jsonBody("PayRequest") },
       responses: {
         200: ok("The job, INSURED.", "Job"),
         400: fail("VALIDATION_ERROR: quoteId missing."),
+        401: unauthorized,
+        403: forbiddenJob,
         404: notFound,
         409: fail(
           "QUOTE_REQUIRED: no quote yet. QUOTE_MISMATCH: quoteId is not the latest quote. " +
@@ -203,14 +312,15 @@ const paths = {
       tags: ["Lifecycle"],
       summary: "Confirm the job is done",
       description:
-        "Records one party's confirmation on an INSURED job. The second confirmation moves it to CONFIRMED and " +
-        "immediately issues the payout (→ PAID_OUT). Repeat confirmations are no-ops, so a payout is issued at most once. " +
-        "If the payout fails the job stays CONFIRMED, and any further confirm retries it.",
+        "Records the logged-in user's confirmation (as customer or worker of the job); no body needed. When both have " +
+        "confirmed the job moves to CONFIRMED and the payout is issued immediately (→ PAID_OUT). If the worker is not on " +
+        "the platform, the customer's confirmation alone does this. Repeat confirmations are no-ops, so a payout is issued " +
+        "at most once. If the payout fails the job stays CONFIRMED, and any further confirm retries it.",
       parameters: [jobIdParam],
-      requestBody: { required: true, content: jsonBody("ConfirmRequest") },
       responses: {
-        200: ok("The job: INSURED after the first confirmation, PAID_OUT after the second.", "Job"),
-        400: fail('VALIDATION_ERROR: party is not "customer" or "worker".'),
+        200: ok("The job: INSURED after a first confirmation, PAID_OUT once complete.", "Job"),
+        401: unauthorized,
+        403: forbiddenJob,
         404: notFound,
         409: fail("INVALID_TRANSITION: the job is not INSURED/CONFIRMED (for example, a claim was filed)."),
         502: adapterFailed,
@@ -221,12 +331,15 @@ const paths = {
     post: {
       tags: ["Lifecycle"],
       summary: "File an insurance claim",
-      description: "Files a claim on an INSURED or CONFIRMED job (→ CLAIM_FILED). The payout is then held.",
+      description:
+        "Files a claim, as the logged-in user's side of the job, on an INSURED or CONFIRMED job (→ CLAIM_FILED). The payout is then held.",
       parameters: [jobIdParam],
       requestBody: { required: true, content: jsonBody("ClaimRequest") },
       responses: {
         200: ok("The job with its claim.", "Job"),
-        400: fail("VALIDATION_ERROR: bad filedBy or reason, or details over 2000 characters."),
+        400: fail("VALIDATION_ERROR: bad reason, or details over 2000 characters."),
+        401: unauthorized,
+        403: forbiddenJob,
         404: notFound,
         409: fail("INVALID_TRANSITION: the job is not INSURED/CONFIRMED, or a claim already exists."),
         502: adapterFailed,
@@ -239,11 +352,19 @@ const paths = {
 export function openApiDocument(): Record<string, unknown> {
   const registry = z.registry<{ id: string }>();
   const documented = [
+    registerBody,
+    loginBody,
     createJobBody,
+    newWorkerBody,
     payBody,
-    confirmBody,
     claimBody,
+    user,
+    authResponse,
+    meResponse,
+    workerSummary,
+    workerList,
     job,
+    jobList,
     jobStatus,
     jobEvent,
     modes,
@@ -271,25 +392,30 @@ export function openApiDocument(): Record<string, unknown> {
     openapi: "3.1.0",
     info: {
       title: "SureJob API",
-      version: "0.1.0",
+      version: "0.2.0",
       description: [
-        "Proof-of-concept backend for the SureJob job lifecycle: book → quote → pay into escrow → insure → both parties confirm → payout, or file a claim.",
+        "Proof-of-concept backend for the SureJob job lifecycle: book → quote → pay into escrow → insure → confirm → payout, or file a claim.",
         "",
+        "- **Auth**: log in with `POST /api/auth/login`, then send `Authorization: Bearer <token>` (use **Authorize** above).",
+        '  Demo accounts: `tunde@example.com` (customer) and `emeka@example.com` (worker), password `password123`.',
         "- **Money** is always integer **kobo** (₦1 = 100 kobo).",
         '- **Errors** are always `{ "error": { "code", "message" } }`.',
         "- **Modes**: each provider integration runs on mock or live; every Job reports the modes it actually used.",
-        "- **No authentication** in the POC.",
-        "",
-        "Seed data (restored by `POST /api/demo/reset`): customer `usr_tunde`, worker `usr_emeka`.",
+        "- **Off-platform workers**: a customer can book someone with no SureJob account by passing `newWorker`.",
       ].join("\n"),
     },
     tags: [
-      { name: "Demo", description: "Configuration and demo controls." },
+      { name: "Auth", description: "Accounts and sessions." },
+      { name: "Demo", description: "Configuration and demo controls (no login needed)." },
       { name: "Jobs", description: "Create and read jobs." },
       { name: "Lifecycle", description: "State transitions. Anything out of order returns 409 INVALID_TRANSITION." },
     ],
+    security: [{ bearerAuth: [] }],
     paths,
-    components: { schemas: stripSchemaKeyword(schemas) },
+    components: {
+      securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } },
+      schemas: stripSchemaKeyword(schemas),
+    },
   };
 }
 

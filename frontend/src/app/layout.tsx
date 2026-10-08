@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { RoleProvider } from "@/context/RoleContext";
+import { AuthProvider } from "@/context/AuthContext";
 
 export const metadata: Metadata = {
   title: "SureJob - Fintech MVP",
@@ -23,9 +23,7 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased min-h-screen">
-        <RoleProvider>
-          {children}
-        </RoleProvider>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

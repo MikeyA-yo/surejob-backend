@@ -52,6 +52,14 @@ const MIGRATIONS: readonly string[] = [
 
   CREATE INDEX events_by_job ON events (job_id, id);
   `,
+  // 2: accounts (email + password) and "my jobs" lookups.
+  `
+  ALTER TABLE users ADD COLUMN email TEXT;
+  ALTER TABLE users ADD COLUMN password_hash TEXT;
+  CREATE UNIQUE INDEX users_by_email ON users (email) WHERE email IS NOT NULL;
+  CREATE INDEX jobs_by_customer ON jobs (customer_id, created_at);
+  CREATE INDEX jobs_by_worker ON jobs (worker_id, created_at);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): void {

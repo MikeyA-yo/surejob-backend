@@ -18,6 +18,7 @@ npm run dev          # watch mode, http://127.0.0.1:8080
 npm start            # same without watch
 npm run demo         # in another terminal: book → quote → pay → confirm ×2 → payout code
 npm run demo:claim   # book → quote → pay → claim
+bash scripts/demo.sh offplatform  # book a worker who is not on SureJob; the customer's confirmation pays out
 npm test             # API + unit tests on an in-memory DB
                      # (set MONGO_TEST_URI to also run the store tests against MongoDB)
 npm run typecheck
@@ -30,14 +31,30 @@ Both are generated from the same zod schemas the API validates with, and work of
 Config comes from env (or `.env`, see `.env.example`). Rehearse fast with `MOCK_LATENCY_MS=0`, and
 practise recovery with `MOCK_FAIL=pay` (the next collect fails once; `POST /api/demo/reset` re-arms it).
 
-The database is seeded whenever it starts empty: customer **Tunde** (`usr_tunde`), worker
-**Emeka** (`usr_emeka`, mechanic), and a "Brake repair" job for ₦15,000.
+The database is seeded whenever the demo accounts are missing: customer **Tunde**
+(`tunde@example.com`) and worker **Emeka** (`emeka@example.com`, mechanic), both with password
+`password123`, and a "Brake repair" job for ₦15,000. `POST /api/demo/reset` restores exactly this
+and removes any other accounts.
+
+## Auth
+
+Email + password accounts (scrypt-hashed) for customers and workers; `POST /api/auth/login` returns a
+JWT to send as `Authorization: Bearer <token>`. Set `JWT_SECRET` in production. Job endpoints use the
+token to decide who is acting: only the job's customer can quote and pay, each side confirms as itself,
+and the payout code is only returned to the worker. `/api/config`, `/api/demo/reset`, `/healthz` and
+`/docs` stay public.
+
+**Workers not on SureJob:** a customer can book someone without an account by sending
+`newWorker: { name, phone, trade? }` instead of `workerId`. That worker can't log in, so the customer's
+confirmation alone releases the payout, and the customer sees the cash code to pass on (live
+XpressCash sends it to the worker's phone).
 
 ## Deploy (Render)
 
 Web Service with build command `npm ci`, start command `npm start`, health check `/healthz`.
 Env: `HOST=0.0.0.0` (required; the default 127.0.0.1 is unreachable), `NODE_VERSION=24`,
-`MONGO_URI` (so data survives deploys), `CORS_ORIGINS=<frontend URL>`. Render sets `PORT`.
+`MONGO_URI` (so data survives deploys), `JWT_SECRET` (so logins survive restarts),
+`CORS_ORIGINS=<frontend URL>`. Render sets `PORT`.
 
 ## API
 

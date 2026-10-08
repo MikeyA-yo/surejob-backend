@@ -1,5 +1,5 @@
-import { MongoClient, type Collection, type Db, type UpdateFilter } from "mongodb";
-import type { EventRecord, JobRecord, JobUpdate, Store, UserRecord } from "./types.ts";
+import { MongoClient, MongoServerError, type Collection, type Db, type UpdateFilter } from "mongodb";
+import { DuplicateEmailError, type EventRecord, type JobRecord, type JobUpdate, type Store, type UserRecord } from "./types.ts";
 
 type UserDoc = Omit<UserRecord, "id"> & { _id: string };
 /** A job is one document: its claim and event timeline are embedded, so every update is atomic. */
@@ -29,7 +29,9 @@ export class MongoStore implements Store {
       await client.connect();
       const db = client.db(dbName);
       await db.command({ ping: 1 });
-      return new MongoStore(client, db);
+      const store = new MongoStore(client, db);
+      await store.#ensureIndexes();
+      return store;
     } catch (err) {
       await client.close().catch(() => {});
       throw err;
@@ -43,6 +45,33 @@ export class MongoStore implements Store {
   async getUser(id: string): Promise<UserRecord | null> {
     const doc = await this.#users.findOne({ _id: id });
     return doc ? fromDoc(doc) : null;
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    const doc = await this.#users.findOne({ email });
+    return doc ? fromDoc(doc) : null;
+  }
+
+  async insertUser(user: UserRecord): Promise<void> {
+    try {
+      await this.#users.insertOne(toDoc(user));
+    } catch (err) {
+      if (err instanceof MongoServerError && err.code === 11000) throw new DuplicateEmailError(user.email ?? "");
+      throw err;
+    }
+  }
+
+  async listWorkers(): Promise<UserRecord[]> {
+    const docs = await this.#users.find({ role: "worker", email: { $type: "string" } }).sort({ name: 1 }).toArray();
+    return docs.map(fromDoc);
+  }
+
+  async listJobsForUser(userId: string): Promise<JobRecord[]> {
+    const docs = await this.#jobs
+      .find({ $or: [{ customerId: userId }, { workerId: userId }] })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return docs.map(fromDoc);
   }
 
   async getJob(id: string): Promise<JobRecord | null> {
@@ -79,6 +108,18 @@ export class MongoStore implements Store {
 
   async close(): Promise<void> {
     await this.#client.close();
+  }
+
+  async #ensureIndexes(): Promise<void> {
+    await Promise.all([
+      // Unique only among users that have an email (off-platform workers have none).
+      this.#users.createIndex(
+        { email: 1 },
+        { name: "users_by_email", unique: true, partialFilterExpression: { email: { $type: "string" } } },
+      ),
+      this.#jobs.createIndex({ customerId: 1, createdAt: -1 }, { name: "jobs_by_customer" }),
+      this.#jobs.createIndex({ workerId: 1, createdAt: -1 }, { name: "jobs_by_worker" }),
+    ]);
   }
 }
 

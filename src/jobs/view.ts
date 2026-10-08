@@ -1,9 +1,12 @@
 import type { Modes } from "../adapters/types.ts";
 import type { ClaimReason } from "../adapters/insurance/insurance.ts";
-import type { JobRecord, UserRecord } from "../store/types.ts";
+import type { JobRecord, Party, UserRecord } from "../store/types.ts";
 import type { JobStatus } from "./stateMachine.ts";
 
-/** The Job shape from the API contract (PRD section 5), plus `quoteId` so a reloaded UI can still pay. */
+/**
+ * The Job shape from the API contract (PRD section 5), plus `quoteId` (a reloaded UI can still pay),
+ * `you` (which side the viewer is) and `worker.onPlatform`.
+ */
 export interface JobView {
   id: string;
   title: string;
@@ -15,12 +18,18 @@ export interface JobView {
   totalKobo: number;
   quoteId: string | null;
   customer: { id: string; name: string };
-  worker: { id: string; name: string };
+  /** onPlatform false: added by the customer, has no account; the customer's confirmation releases payout. */
+  worker: { id: string; name: string; onPlatform: boolean };
+  /** The viewer's side of this job. */
+  you: Party;
   confirmations: { customer: boolean; worker: boolean };
   escrowRef: string | null;
   policyRef: string | null;
   claim: { ref: string; status: string; reason: ClaimReason } | null;
-  /** Set once paid out. code/expiresAt are always present on mock; live XpressCash may not return them. */
+  /**
+   * Set once paid out. `code` is only shown to the worker, or to the customer when the worker is not on
+   * the platform (they pass it on); otherwise null. Live XpressCash may not return code/expiresAt.
+   */
   payout: { code: string | null; expiresAt: string | null; ref: string } | null;
   /** The mode each adapter actually ran in for this job. */
   modes: Modes;
@@ -34,7 +43,26 @@ export interface QuoteView {
   coverage: string[];
 }
 
-export function toJobView(job: JobRecord, customer: UserRecord, worker: UserRecord): JobView {
+export interface UserView {
+  id: string;
+  name: string;
+  email: string | null;
+  role: Party;
+  phone: string;
+  trade: string | null;
+}
+
+export function toUserView(user: UserRecord): UserView {
+  return { id: user.id, name: user.name, email: user.email, role: user.role, phone: user.phone, trade: user.trade };
+}
+
+export function isOnPlatform(user: UserRecord): boolean {
+  return user.email !== null;
+}
+
+export function toJobView(job: JobRecord, customer: UserRecord, worker: UserRecord, viewer: Party): JobView {
+  const workerOnPlatform = isOnPlatform(worker);
+  const canSeeCode = viewer === "worker" || !workerOnPlatform;
   return {
     id: job.id,
     title: job.title,
@@ -44,7 +72,8 @@ export function toJobView(job: JobRecord, customer: UserRecord, worker: UserReco
     totalKobo: job.amountKobo + (job.premiumKobo ?? 0),
     quoteId: job.quoteId,
     customer: { id: customer.id, name: customer.name },
-    worker: { id: worker.id, name: worker.name },
+    worker: { id: worker.id, name: worker.name, onPlatform: workerOnPlatform },
+    you: viewer,
     confirmations: {
       customer: job.customerConfirmedAt !== null,
       worker: job.workerConfirmedAt !== null,
@@ -53,7 +82,9 @@ export function toJobView(job: JobRecord, customer: UserRecord, worker: UserReco
     policyRef: job.policyRef,
     claim: job.claim ? { ref: job.claim.ref, status: job.claim.status, reason: job.claim.reason } : null,
     payout:
-      job.payoutRef !== null ? { code: job.payoutCode, expiresAt: job.payoutExpiresAt, ref: job.payoutRef } : null,
+      job.payoutRef !== null
+        ? { code: canSeeCode ? job.payoutCode : null, expiresAt: job.payoutExpiresAt, ref: job.payoutRef }
+        : null,
     modes: job.modes,
     events: job.events.map((e) => ({ type: e.type, at: e.at, detail: e.detail })),
   };

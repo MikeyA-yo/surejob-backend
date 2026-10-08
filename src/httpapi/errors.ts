@@ -9,6 +9,10 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   QUOTE_REQUIRED: 409,
   QUOTE_MISMATCH: 409,
   ADAPTER_ERROR: 502,
+  UNAUTHORIZED: 401,
+  INVALID_CREDENTIALS: 401,
+  FORBIDDEN: 403,
+  EMAIL_TAKEN: 409,
 };
 
 /** Contract error shape: `{ error: { code, message } }`. */

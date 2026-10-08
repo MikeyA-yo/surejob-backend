@@ -9,15 +9,23 @@ afterEach(async () => {
   await api?.close();
 });
 
+const NEW_WORKER_BOOKING = {
+  title: "Leaking pipe",
+  amountKobo: 800_000,
+  newWorker: { name: "Musa", phone: "+234 803 111 2222", trade: "plumber" },
+};
+
 describe("happy path", () => {
-  it("books, quotes, pays, confirms twice and issues one payout", async () => {
+  it("books, quotes, pays, both confirm and issues one payout", async () => {
     api = await startTestServer();
 
     const booked = await api.request<JobView>("POST", "/api/jobs", SEED_BOOKING);
     assert.equal(booked.status, 201);
     assert.equal(booked.body.status, "BOOKED");
     assert.equal(booked.body.premiumKobo, null);
+    assert.equal(booked.body.you, "customer");
     assert.deepEqual(booked.body.customer, { id: "usr_tunde", name: "Tunde" });
+    assert.deepEqual(booked.body.worker, { id: "usr_emeka", name: "Emeka", onPlatform: true });
     const id = booked.body.id;
 
     const quote = await api.request("POST", `/api/jobs/${id}/quote`);
@@ -33,21 +41,23 @@ describe("happy path", () => {
     assert.match(paid.body.escrowRef!, /^ESC-/);
     assert.match(paid.body.policyRef!, /^POL-/);
 
-    const first = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`, { party: "customer" });
+    const first = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`);
     assert.equal(first.body.status, "INSURED");
     assert.deepEqual(first.body.confirmations, { customer: true, worker: false });
     assert.equal(first.body.payout, null);
 
-    const second = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`, { party: "worker" });
+    const second = await api.asWorker<JobView>("POST", `/api/jobs/${id}/confirm`);
     assert.equal(second.body.status, "PAID_OUT");
+    assert.equal(second.body.you, "worker");
     assert.match(second.body.payout!.code!, /^\d{8}$/);
     assert.ok(Date.parse(second.body.payout!.expiresAt!) > Date.now());
 
-    for (const party of ["worker", "customer"]) {
-      const again = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`, { party });
-      assert.equal(again.status, 200);
-      assert.deepEqual(again.body.payout, second.body.payout);
-    }
+    // Repeats are no-ops, and the customer never sees an on-platform worker's code.
+    const again = await api.asWorker<JobView>("POST", `/api/jobs/${id}/confirm`);
+    assert.deepEqual(again.body.payout, second.body.payout);
+    const asCustomer = await api.request<JobView>("POST", `/api/jobs/${id}/confirm`);
+    assert.equal(asCustomer.status, 200);
+    assert.deepEqual(asCustomer.body.payout, { ...second.body.payout, code: null });
 
     const final = await api.request<JobView>("GET", `/api/jobs/${id}`);
     assert.deepEqual(eventTypes(final.body), [
@@ -69,7 +79,6 @@ describe("happy path", () => {
     const job = await insuredJob(api);
 
     const claimed = await api.request<JobView>("POST", `/api/jobs/${job.id}/claim`, {
-      filedBy: "customer",
       reason: "damage",
       details: "Scratched wheel",
     });
@@ -77,13 +86,125 @@ describe("happy path", () => {
     assert.equal(claimed.body.status, "CLAIM_FILED");
     assert.match(claimed.body.claim!.ref, /^CLM-/);
     assert.deepEqual({ ...claimed.body.claim, ref: "x" }, { ref: "x", status: "received", reason: "damage" });
+    assert.match(claimed.body.events.at(-1)!.detail, /^Customer filed a property damage claim/);
 
-    const confirm = await api.request("POST", `/api/jobs/${job.id}/confirm`, { party: "customer" });
+    const confirm = await api.asWorker("POST", `/api/jobs/${job.id}/confirm`);
     assert.equal(confirm.status, 409);
     assert.equal(confirm.body.error.code, "INVALID_TRANSITION");
 
-    const again = await api.request("POST", `/api/jobs/${job.id}/claim`, { filedBy: "worker", reason: "injury" });
+    const again = await api.asWorker("POST", `/api/jobs/${job.id}/claim`, { reason: "injury" });
     assert.equal(again.status, 409);
+  });
+});
+
+describe("workers not on SureJob", () => {
+  it("books a new worker; the customer's confirmation alone pays out and the customer sees the code", async () => {
+    api = await startTestServer();
+
+    const booked = await api.request<JobView>("POST", "/api/jobs", NEW_WORKER_BOOKING);
+    assert.equal(booked.status, 201);
+    assert.equal(booked.body.worker.name, "Musa");
+    assert.equal(booked.body.worker.onPlatform, false);
+    assert.deepEqual(eventTypes(booked.body), ["job.booked", "worker.added"]);
+
+    const insured = await insuredJob(api, NEW_WORKER_BOOKING);
+    const paidOut = await api.request<JobView>("POST", `/api/jobs/${insured.id}/confirm`);
+    assert.equal(paidOut.status, 200);
+    assert.equal(paidOut.body.status, "PAID_OUT");
+    assert.deepEqual(paidOut.body.confirmations, { customer: true, worker: false });
+    assert.match(paidOut.body.payout!.code!, /^\d{8}$/, "customer relays the code to an off-platform worker");
+    assert.match(paidOut.body.events.find((e) => e.type === "job.confirmed")!.detail, /Musa is not on SureJob/);
+  });
+
+  it("does not list new workers as registered workers", async () => {
+    api = await startTestServer();
+    await api.request("POST", "/api/jobs", NEW_WORKER_BOOKING);
+    const workers = await api.request("GET", "/api/workers");
+    assert.equal(workers.status, 200);
+    assert.deepEqual(workers.body, { workers: [{ id: "usr_emeka", name: "Emeka", trade: "mechanic" }] });
+  });
+
+  it("requires exactly one of workerId or newWorker, and a valid phone", async () => {
+    api = await startTestServer();
+    const { workerId: _ignored, ...withoutWorker } = SEED_BOOKING;
+    for (const body of [
+      withoutWorker,
+      { ...SEED_BOOKING, newWorker: NEW_WORKER_BOOKING.newWorker },
+      { ...NEW_WORKER_BOOKING, newWorker: { name: "Musa", phone: "12" } },
+    ]) {
+      const res = await api.request("POST", "/api/jobs", body);
+      assert.equal(res.status, 400, JSON.stringify(body));
+      assert.equal(res.body.error.code, "VALIDATION_ERROR");
+    }
+  });
+});
+
+describe("auth", () => {
+  it("registers, logs in and identifies the user", async () => {
+    api = await startTestServer();
+    const account = { name: "Ada", email: "Ada@Example.com", password: "s3cret-pass", role: "customer", phone: "08031234567" };
+
+    const registered = await api.anon("POST", "/api/auth/register", account);
+    assert.equal(registered.status, 201);
+    assert.equal(registered.body.user.email, "ada@example.com");
+    assert.equal(registered.body.user.passwordHash, undefined, "never expose the hash");
+    assert.equal((await api.anon("POST", "/api/auth/register", account)).body.error.code, "EMAIL_TAKEN");
+
+    const login = await api.anon("POST", "/api/auth/login", { email: "ada@example.com", password: "s3cret-pass" });
+    assert.equal(login.status, 200);
+    const me = await api.as(login.body.token)("GET", "/api/auth/me");
+    assert.equal(me.body.user.name, "Ada");
+
+    // A new customer can book straight away.
+    const booked = await api.as(login.body.token)<JobView>("POST", "/api/jobs", SEED_BOOKING);
+    assert.equal(booked.status, 201);
+    assert.equal(booked.body.customer.name, "Ada");
+  });
+
+  it("rejects bad credentials and bad tokens", async () => {
+    api = await startTestServer();
+    for (const body of [
+      { email: "tunde@example.com", password: "wrong-password" },
+      { email: "nobody@example.com", password: "password123" },
+    ]) {
+      const res = await api.anon("POST", "/api/auth/login", body);
+      assert.equal(res.status, 401);
+      assert.equal(res.body.error.code, "INVALID_CREDENTIALS");
+    }
+    assert.equal((await api.anon("GET", `/api/jobs/${api.seedJobId}`)).status, 401);
+    assert.equal((await api.as("not-a-jwt")("GET", "/api/jobs")).body.error.code, "UNAUTHORIZED");
+    assert.equal((await api.anon("GET", "/api/config")).status, 200, "config stays public");
+  });
+
+  it("enforces who can do what on a job", async () => {
+    api = await startTestServer();
+    const id = api.seedJobId;
+
+    assert.equal((await api.asWorker("POST", "/api/jobs", SEED_BOOKING)).body.error.code, "FORBIDDEN");
+    assert.equal((await api.asWorker("POST", `/api/jobs/${id}/quote`)).body.error.code, "FORBIDDEN");
+
+    const outsider = await api.anon("POST", "/api/auth/register", {
+      name: "Eve",
+      email: "eve@example.com",
+      password: "password123",
+      role: "customer",
+      phone: "+2348039999999",
+    });
+    const res = await api.as(outsider.body.token)("GET", `/api/jobs/${id}`);
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error.code, "FORBIDDEN");
+  });
+
+  it("lists each user's own jobs", async () => {
+    api = await startTestServer();
+    await api.request("POST", "/api/jobs", NEW_WORKER_BOOKING);
+    const mine = await api.request<{ jobs: JobView[] }>("GET", "/api/jobs");
+    assert.deepEqual(
+      mine.body.jobs.map((j) => j.title),
+      ["Leaking pipe", "Brake repair"],
+    );
+    const workers = await api.asWorker<{ jobs: JobView[] }>("GET", "/api/jobs");
+    assert.deepEqual(workers.body.jobs.map((j) => [j.title, j.you]), [["Brake repair", "worker"]]);
   });
 });
 
@@ -110,8 +231,8 @@ describe("state machine enforcement", () => {
     const id = api.seedJobId;
 
     for (const [path, body] of [
-      ["confirm", { party: "customer" }],
-      ["claim", { filedBy: "customer", reason: "damage" }],
+      ["confirm", undefined],
+      ["claim", { reason: "damage" }],
     ] as const) {
       const res = await api.request("POST", `/api/jobs/${id}/${path}`, body);
       assert.equal(res.status, 409, path);
@@ -165,15 +286,15 @@ describe("idempotency and recovery", () => {
   it("a failed payout leaves the job CONFIRMED and the next confirm retries it", async () => {
     api = await startTestServer({ failOnce: ["payout"] });
     const job = await insuredJob(api);
-    await api.request("POST", `/api/jobs/${job.id}/confirm`, { party: "customer" });
+    await api.request("POST", `/api/jobs/${job.id}/confirm`);
 
-    const failed = await api.request("POST", `/api/jobs/${job.id}/confirm`, { party: "worker" });
+    const failed = await api.asWorker("POST", `/api/jobs/${job.id}/confirm`);
     assert.equal(failed.status, 502);
     const confirmed = await api.request<JobView>("GET", `/api/jobs/${job.id}`);
     assert.equal(confirmed.body.status, "CONFIRMED");
     assert.equal(confirmed.body.payout, null);
 
-    const retried = await api.request<JobView>("POST", `/api/jobs/${job.id}/confirm`, { party: "worker" });
+    const retried = await api.asWorker<JobView>("POST", `/api/jobs/${job.id}/confirm`);
     assert.equal(retried.status, 200);
     assert.equal(retried.body.status, "PAID_OUT");
     assert.equal(eventTypes(retried.body).filter((t) => t === "payout.issued").length, 1);
@@ -188,8 +309,8 @@ describe("validation", () => {
       [{ ...SEED_BOOKING, amountKobo: 12.5 }, 400],
       [{ ...SEED_BOOKING, amountKobo: 50_000_001 }, 400],
       [{ ...SEED_BOOKING, title: "   " }, 400],
-      [{ ...SEED_BOOKING, customerId: "usr_nobody" }, 400],
-      [{ ...SEED_BOOKING, customerId: "usr_emeka" }, 400], // a worker is not a customer
+      [{ ...SEED_BOOKING, workerId: "usr_nobody" }, 400],
+      [{ ...SEED_BOOKING, workerId: "usr_tunde" }, 400], // a customer is not a worker
       [{ ...SEED_BOOKING, amountKobo: "1500000" }, 400],
       [{ ...SEED_BOOKING, amountKobo: 50_000_000 }, 201],
     ];
@@ -200,16 +321,13 @@ describe("validation", () => {
     }
   });
 
-  it("returns 400 for a bad party or reason, 404 for unknown jobs and routes, 400 for bad JSON", async () => {
+  it("returns 400 for a bad reason, 404 for unknown jobs and routes, 400 for bad JSON", async () => {
     api = await startTestServer();
     const id = api.seedJobId;
 
-    const badParty = await api.request("POST", `/api/jobs/${id}/confirm`, { party: "admin" });
-    assert.equal(badParty.status, 400);
-    assert.equal(badParty.body.error.code, "VALIDATION_ERROR");
-
-    const badReason = await api.request("POST", `/api/jobs/${id}/claim`, { filedBy: "customer", reason: "boredom" });
+    const badReason = await api.request("POST", `/api/jobs/${id}/claim`, { reason: "boredom" });
     assert.equal(badReason.status, 400);
+    assert.equal(badReason.body.error.code, "VALIDATION_ERROR");
 
     const missing = await api.request("GET", "/api/jobs/job_missing");
     assert.equal(missing.status, 404);
@@ -231,7 +349,7 @@ describe("modes and demo support", () => {
   it("reports modes and never falls back from a failing live adapter", async () => {
     api = await startTestServer({ modes: { payment: "live" } });
 
-    const config = await api.request("GET", "/api/config");
+    const config = await api.anon("GET", "/api/config");
     assert.deepEqual(config.body, { modes: { payment: "live", insurance: "mock", payout: "mock" } });
 
     const { body: job } = await api.request<JobView>("POST", "/api/jobs", SEED_BOOKING);
@@ -247,22 +365,30 @@ describe("modes and demo support", () => {
     assert.equal(after.body.escrowRef, null);
   });
 
-  it("reset restores exactly the seed and re-arms MOCK_FAIL", async () => {
+  it("reset restores exactly the seed, removes registered accounts and re-arms MOCK_FAIL", async () => {
     api = await startTestServer({ failOnce: ["quote"] });
     assert.equal((await api.request("POST", `/api/jobs/${api.seedJobId}/quote`)).status, 502);
     await insuredJob(api);
+    const extra = await api.anon("POST", "/api/auth/register", {
+      name: "Ada",
+      email: "ada@example.com",
+      password: "password123",
+      role: "customer",
+      phone: "+2348031234567",
+    });
 
     const started = performance.now();
-    const reset = await api.request("POST", "/api/demo/reset");
+    const reset = await api.anon("POST", "/api/demo/reset");
     assert.ok(performance.now() - started < 1000);
     assert.equal(reset.status, 200);
 
+    assert.equal((await api.as(extra.body.token)("GET", "/api/auth/me")).status, 401, "registered accounts are wiped");
     const { body: job } = await api.request<JobView>("GET", `/api/jobs/${reset.body.jobId}`);
     assert.equal(job.status, "BOOKED");
     assert.equal(job.title, "Brake repair");
     assert.equal(job.amountKobo, 1_500_000);
     assert.deepEqual(job.customer, { id: "usr_tunde", name: "Tunde" });
-    assert.deepEqual(job.worker, { id: "usr_emeka", name: "Emeka" });
+    assert.deepEqual(job.worker, { id: "usr_emeka", name: "Emeka", onPlatform: true });
     assert.deepEqual(eventTypes(job), ["job.booked"]);
     assert.equal((await api.request("GET", `/api/jobs/${api.seedJobId}`)).status, 404);
 
@@ -275,15 +401,20 @@ describe("API docs", () => {
   it("serves an OpenAPI 3.1 spec covering every endpoint, and Swagger UI", async () => {
     api = await startTestServer();
 
-    const spec = await api.request("GET", "/openapi.json");
+    const spec = await api.anon("GET", "/openapi.json");
     assert.equal(spec.status, 200);
     assert.equal(spec.body.openapi, "3.1.0");
     const operations = Object.entries(spec.body.paths).flatMap(([path, ops]) =>
       Object.keys(ops as object).map((method) => `${method.toUpperCase()} ${path}`),
     );
     assert.deepEqual(operations.sort(), [
+      "GET /api/auth/me",
       "GET /api/config",
+      "GET /api/jobs",
       "GET /api/jobs/{id}",
+      "GET /api/workers",
+      "POST /api/auth/login",
+      "POST /api/auth/register",
       "POST /api/demo/reset",
       "POST /api/jobs",
       "POST /api/jobs/{id}/claim",
@@ -292,6 +423,7 @@ describe("API docs", () => {
       "POST /api/jobs/{id}/quote",
     ]);
     assert.ok(spec.body.components.schemas.Job);
+    assert.ok(spec.body.components.securitySchemes.bearerAuth);
 
     const ui = await fetch(`${api.baseUrl}/docs/`);
     assert.equal(ui.status, 200);

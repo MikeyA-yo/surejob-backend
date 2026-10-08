@@ -1,4 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { createAdapters } from "./adapters/index.ts";
+import { AuthService } from "./auth/service.ts";
+import { TokenService } from "./auth/tokens.ts";
 import { MockRuntime } from "./adapters/mock/runtime.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { createApp } from "./httpapi/app.ts";
@@ -36,6 +39,12 @@ async function main(): Promise<void> {
     onDemoReset: () => mockRuntime.rearm(),
   });
 
+  if (!config.auth.jwtSecret) {
+    log.warn("JWT_SECRET is not set; using a random key, so logins end when the server restarts");
+  }
+  const tokens = new TokenService(config.auth.jwtSecret ?? randomBytes(32).toString("hex"), config.auth.jwtTtl);
+  const auth = new AuthService({ store, tokens, logger: log });
+
   if (config.ecobank?.signing.kind === "static" && (config.modes.payment === "live" || config.modes.payout === "live")) {
     log.warn("ecobank requests use fixed requestToken/secureHash (no ECOBANK_SECRET_KEY); sandbox only");
   }
@@ -43,7 +52,7 @@ async function main(): Promise<void> {
   const seededJobId = await jobs.ensureSeeded();
   if (seededJobId) log.info("seeded empty database", { jobId: seededJobId });
 
-  const app = createApp({ jobs, logger: log, corsOrigins: config.corsOrigins });
+  const app = createApp({ jobs, auth, logger: log, corsOrigins: config.corsOrigins });
   const server = app.listen(config.port, config.host, (err) => {
     if (err) {
       log.error("failed to start", { error: err.message });

@@ -10,6 +10,18 @@ export interface UserRecord {
   role: Party;
   phone: string;
   trade: string | null;
+  /** Lowercase. null for a worker added by a customer who has no SureJob account. */
+  email: string | null;
+  /** scrypt hash (see auth/passwords.ts). null when the user cannot log in. */
+  passwordHash: string | null;
+}
+
+/** Thrown by insertUser when the email is already registered. */
+export class DuplicateEmailError extends Error {
+  constructor(email: string) {
+    super(`${email} is already registered`);
+    this.name = "DuplicateEmailError";
+  }
 }
 
 export interface EventRecord {
@@ -90,6 +102,13 @@ export interface Store {
   /** False on an empty database, which then gets seeded. */
   hasUsers(): Promise<boolean>;
   getUser(id: string): Promise<UserRecord | null>;
+  getUserByEmail(email: string): Promise<UserRecord | null>;
+  /** Throws DuplicateEmailError if the email is taken. */
+  insertUser(user: UserRecord): Promise<void>;
+  /** Workers with an account, by name. */
+  listWorkers(): Promise<UserRecord[]>;
+  /** Jobs where the user is the customer or the worker, newest first. */
+  listJobsForUser(userId: string): Promise<JobRecord[]>;
   getJob(id: string): Promise<JobRecord | null>;
   insertJob(job: JobRecord): Promise<void>;
   /** Returns the updated job, or null if the job is gone or no longer in `expectStatus`. */

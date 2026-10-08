@@ -1,7 +1,26 @@
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import type { Modes } from "../adapters/types.ts";
 import { withTransaction } from "./db.ts";
-import type { ClaimRecord, EventRecord, JobPatch, JobRecord, JobUpdate, Store, UserRecord } from "./types.ts";
+import {
+  DuplicateEmailError,
+  type ClaimRecord,
+  type EventRecord,
+  type JobPatch,
+  type JobRecord,
+  type JobUpdate,
+  type Store,
+  type UserRecord,
+} from "./types.ts";
+
+interface UserRow {
+  id: string;
+  name: string;
+  role: UserRecord["role"];
+  phone: string;
+  trade: string | null;
+  email: string | null;
+  password_hash: string | null;
+}
 
 interface JobRow {
   id: string;
@@ -64,7 +83,10 @@ export class SqliteStore implements Store {
   readonly #stmt: Record<
     | "hasUsers"
     | "getUser"
+    | "getUserByEmail"
     | "insertUser"
+    | "listWorkers"
+    | "listJobIdsForUser"
     | "getJob"
     | "insertJob"
     | "getClaim"
@@ -79,7 +101,15 @@ export class SqliteStore implements Store {
     this.#stmt = {
       hasUsers: db.prepare("SELECT EXISTS (SELECT 1 FROM users) AS present"),
       getUser: db.prepare("SELECT * FROM users WHERE id = ?"),
-      insertUser: db.prepare("INSERT INTO users (id, name, role, phone, trade) VALUES (:id, :name, :role, :phone, :trade)"),
+      getUserByEmail: db.prepare("SELECT * FROM users WHERE email = ?"),
+      insertUser: db.prepare(`
+        INSERT INTO users (id, name, role, phone, trade, email, password_hash)
+        VALUES (:id, :name, :role, :phone, :trade, :email, :password_hash)
+      `),
+      listWorkers: db.prepare("SELECT * FROM users WHERE role = 'worker' AND email IS NOT NULL ORDER BY name"),
+      listJobIdsForUser: db.prepare(
+        "SELECT id FROM jobs WHERE customer_id = :user OR worker_id = :user ORDER BY created_at DESC, rowid DESC",
+      ),
       getJob: db.prepare("SELECT * FROM jobs WHERE id = ?"),
       insertJob: db.prepare(`
         INSERT INTO jobs (id, customer_id, worker_id, title, amount_kobo, premium_kobo, status, quote_id, escrow_ref,
@@ -106,8 +136,24 @@ export class SqliteStore implements Store {
   }
 
   async getUser(id: string): Promise<UserRecord | null> {
-    const row = this.#stmt.getUser.get(id) as UserRecord | undefined;
-    return row ? { id: row.id, name: row.name, role: row.role, phone: row.phone, trade: row.trade } : null;
+    return userFromRow(this.#stmt.getUser.get(id) as UserRow | undefined);
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    return userFromRow(this.#stmt.getUserByEmail.get(email) as UserRow | undefined);
+  }
+
+  async insertUser(user: UserRecord): Promise<void> {
+    this.#insertUser(user);
+  }
+
+  async listWorkers(): Promise<UserRecord[]> {
+    return (this.#stmt.listWorkers.all() as unknown as UserRow[]).map((row) => userFromRow(row)!);
+  }
+
+  async listJobsForUser(userId: string): Promise<JobRecord[]> {
+    const rows = this.#stmt.listJobIdsForUser.all({ user: userId }) as unknown as { id: string }[];
+    return rows.map((row) => this.#readJob(row.id)!);
   }
 
   async getJob(id: string): Promise<JobRecord | null> {
@@ -144,13 +190,32 @@ export class SqliteStore implements Store {
   async reset(users: UserRecord[], job: JobRecord): Promise<void> {
     withTransaction(this.#db, () => {
       this.#db.exec("DELETE FROM events; DELETE FROM claims; DELETE FROM jobs; DELETE FROM users;");
-      for (const user of users) this.#stmt.insertUser.run({ ...user });
+      for (const user of users) this.#insertUser(user);
       this.#insertJob(job);
     });
   }
 
   async close(): Promise<void> {
     this.#db.close();
+  }
+
+  #insertUser(user: UserRecord): void {
+    try {
+      this.#stmt.insertUser.run({
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        phone: user.phone,
+        trade: user.trade,
+        email: user.email,
+        password_hash: user.passwordHash,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("UNIQUE constraint failed: users.email")) {
+        throw new DuplicateEmailError(user.email ?? "");
+      }
+      throw err;
+    }
   }
 
   #readJob(id: string): JobRecord | null {
@@ -233,4 +298,17 @@ export class SqliteStore implements Store {
       this.#stmt.insertEvent.run({ job_id: jobId, type: e.type, detail: e.detail, created_at: e.at });
     }
   }
+}
+
+function userFromRow(row: UserRow | undefined): UserRecord | null {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    phone: row.phone,
+    trade: row.trade,
+    email: row.email,
+    passwordHash: row.password_hash,
+  };
 }

@@ -6,7 +6,20 @@ import { IN_MEMORY, openDatabase } from "../src/store/db.ts";
 import { MongoStore } from "../src/store/mongoStore.ts";
 import { SEED_CUSTOMER, SEED_WORKER } from "../src/store/seed.ts";
 import { SqliteStore } from "../src/store/sqliteStore.ts";
-import type { JobRecord, Store } from "../src/store/types.ts";
+import { DuplicateEmailError, type JobRecord, type Store, type UserRecord } from "../src/store/types.ts";
+
+const CUSTOMER: UserRecord = { ...SEED_CUSTOMER, passwordHash: "scrypt$hash" };
+const WORKER: UserRecord = { ...SEED_WORKER, passwordHash: "scrypt$hash" };
+/** A worker with no account. */
+const GUEST_WORKER: UserRecord = {
+  id: "usr_musa",
+  name: "Musa",
+  role: "worker",
+  phone: "+2348031112222",
+  trade: "plumber",
+  email: null,
+  passwordHash: null,
+};
 
 function job(overrides: Partial<JobRecord> = {}): JobRecord {
   return {
@@ -48,15 +61,44 @@ function storeContract(name: string, open: () => Promise<{ store: Store; cleanup
     });
 
     it("reset replaces everything with the given users and job", async () => {
-      await store.reset([SEED_CUSTOMER, SEED_WORKER], job({ id: "job_old" }));
+      await store.reset([CUSTOMER, WORKER], job({ id: "job_old" }));
       const seeded = job();
-      await store.reset([SEED_CUSTOMER, SEED_WORKER], seeded);
+      await store.reset([CUSTOMER, WORKER], seeded);
 
       assert.equal(await store.hasUsers(), true);
-      assert.deepEqual(await store.getUser(SEED_WORKER.id), SEED_WORKER);
+      assert.deepEqual(await store.getUser(SEED_WORKER.id), WORKER);
       assert.equal(await store.getUser("usr_nobody"), null);
       assert.equal(await store.getJob("job_old"), null);
       assert.deepEqual(await store.getJob(seeded.id), seeded);
+    });
+
+    it("finds users by email, rejects duplicate emails, and allows many users without one", async () => {
+      await store.reset([CUSTOMER, WORKER], job());
+      assert.deepEqual(await store.getUserByEmail("tunde@example.com"), CUSTOMER);
+      assert.equal(await store.getUserByEmail("nobody@example.com"), null);
+
+      await assert.rejects(store.insertUser({ ...CUSTOMER, id: "usr_dup" }), DuplicateEmailError);
+      await store.insertUser(GUEST_WORKER);
+      await store.insertUser({ ...GUEST_WORKER, id: "usr_musa2" });
+      assert.deepEqual(await store.getUser(GUEST_WORKER.id), GUEST_WORKER);
+    });
+
+    it("lists only workers with an account", async () => {
+      await store.reset([CUSTOMER, WORKER], job());
+      await store.insertUser(GUEST_WORKER);
+      assert.deepEqual(await store.listWorkers(), [WORKER]);
+    });
+
+    it("lists a user's jobs as customer or worker, newest first", async () => {
+      const older = job({ createdAt: "2026-10-09T09:00:00.000Z" });
+      await store.reset([CUSTOMER, WORKER], older);
+      await store.insertUser(GUEST_WORKER);
+      const newer = job({ workerId: GUEST_WORKER.id, createdAt: "2026-10-09T11:00:00.000Z" });
+      await store.insertJob(newer);
+
+      assert.deepEqual((await store.listJobsForUser(CUSTOMER.id)).map((j) => j.id), [newer.id, older.id]);
+      assert.deepEqual((await store.listJobsForUser(WORKER.id)).map((j) => j.id), [older.id]);
+      assert.deepEqual(await store.listJobsForUser("usr_nobody"), []);
     });
 
     it("insertJob round-trips every field", async () => {

@@ -22,6 +22,12 @@ export interface Config {
     maxAmountKobo: number;
     coverDurationDays: number;
   };
+  auth: {
+    /** HS256 key. null when JWT_SECRET is unset: a random per-process key is used instead. */
+    jwtSecret: string | null;
+    /** Token lifetime, e.g. "7d", "12h". */
+    jwtTtl: string;
+  };
   /** null when the ECOBANK_* credentials are not set (fine while payment and payout are mocked). */
   ecobank: EcobankConfig | null;
 }
@@ -107,6 +113,9 @@ const envSchema = z.object({
   MAX_JOB_AMOUNT_KOBO: z.coerce.number().int().positive().default(50_000_000), // ₦500,000
   COVER_DURATION_DAYS: z.coerce.number().int().positive().default(30),
 
+  JWT_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
+  JWT_TTL: z.string().regex(/^\d+[smhdw]$/, 'e.g. "7d" or "12h"').default("7d"),
+
   ECOBANK_BASE_URL: z.url().default("https://apimuat-gateway.ecobank.com"),
   ECOBANK_SUBSCRIPTION_KEY: z.string().trim().optional(),
   ECOBANK_AFFILIATE_CODE: z.string().trim().optional(),
@@ -146,6 +155,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     modes: { payment: e.PAYMENT_MODE, insurance: e.INSURANCE_MODE, payout: e.PAYOUT_MODE },
     mock: { latency: e.MOCK_LATENCY_MS, failOnce: e.MOCK_FAIL },
     jobs: { maxAmountKobo: e.MAX_JOB_AMOUNT_KOBO, coverDurationDays: e.COVER_DURATION_DAYS },
+    auth: { jwtSecret: e.JWT_SECRET ?? null, jwtTtl: e.JWT_TTL },
     ecobank: "missing" in ecobank ? null : ecobank,
   };
 }

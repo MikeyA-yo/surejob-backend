@@ -1,9 +1,39 @@
 /**
- * Centralized API client for SureJob backend REST endpoints.
- * Base URL defaults to http://localhost:8080/api.
+ * Client for the SureJob backend REST API.
+ * Base URL comes from NEXT_PUBLIC_API_URL (including the /api suffix); defaults to the local backend.
  */
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
+const TOKEN_KEY = "surejob_token";
+
+/** Fired when the API rejects the stored token; AuthContext listens and logs the user out. */
+export const LOGGED_OUT_EVENT = "surejob:logged-out";
+
+export type Party = "customer" | "worker";
+export type JobStatus = "BOOKED" | "ESCROWED" | "INSURED" | "CONFIRMED" | "PAID_OUT" | "CLAIM_FILED";
+export type ClaimReason = "damage" | "injury" | "not_done";
+export type AdapterMode = "mock" | "live";
+
+export interface Modes {
+  payment: AdapterMode;
+  insurance: AdapterMode;
+  payout: AdapterMode;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string | null;
+  role: Party;
+  phone: string;
+  trade: string | null;
+}
+
+export interface WorkerSummary {
+  id: string;
+  name: string;
+  trade: string | null;
+}
 
 export interface JobEvent {
   type: string;
@@ -11,169 +41,155 @@ export interface JobEvent {
   detail: string;
 }
 
-export interface JobCustomer {
-  id: string;
-  name: string;
-}
-
-export interface JobWorker {
-  id: string;
-  name: string;
-}
-
-export interface JobPayout {
-  code?: string;
-  expiresAt?: string;
-  ref?: string;
-}
-
-export interface JobClaim {
-  ref?: string;
-  status?: string;
-  reason?: string;
-}
-
 export interface Job {
   id: string;
   title: string;
-  status: "BOOKED" | "INSURED" | "CONFIRMED" | "PAID_OUT" | "CLAIM_FILED";
+  status: JobStatus;
   amountKobo: number;
   premiumKobo: number | null;
   totalKobo: number;
   quoteId: string | null;
-  customer: JobCustomer;
-  worker: JobWorker;
-  confirmations: {
-    customer: boolean;
-    worker: boolean;
-  };
+  customer: { id: string; name: string };
+  /** onPlatform false: no account; the customer's confirmation releases payout and the customer sees the code. */
+  worker: { id: string; name: string; onPlatform: boolean };
+  /** Which side of the job the logged-in user is. */
+  you: Party;
+  confirmations: { customer: boolean; worker: boolean };
   escrowRef: string | null;
   policyRef: string | null;
-  claim: JobClaim | null;
-  payout: JobPayout | null;
+  claim: { ref: string; status: string; reason: ClaimReason } | null;
+  /** code is null unless this user may see it. */
+  payout: { code: string | null; expiresAt: string | null; ref: string } | null;
+  modes: Modes;
   events: JobEvent[];
 }
 
-export interface QuoteResponse {
+export interface Quote {
   quoteId: string;
   premiumKobo: number;
   totalKobo: number;
-  coverage?: string[];
+  coverage: string[];
+}
+
+export interface AuthResult {
+  token: string;
+  user: User;
+}
+
+export interface NewWorker {
+  name: string;
+  phone: string;
+  trade?: string;
 }
 
 export interface CreateJobParams {
-  customerId?: string;
+  title: string;
+  amountKobo: number;
+  /** Exactly one of workerId or newWorker. */
   workerId?: string;
-  title?: string;
-  amountKobo?: number;
+  newWorker?: NewWorker;
 }
 
-async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
+export interface RegisterParams {
+  name: string;
+  email: string;
+  password: string;
+  role: Party;
+  phone: string;
+  trade?: string;
+}
 
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    const message = errBody?.error?.message || `HTTP ${res.status}: ${res.statusText}`;
-    throw new Error(message);
+/** An error response from the API (`{ error: { code, message } }`), or a network failure (code NETWORK). */
+export class ApiError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
   }
-
-  return res.json() as Promise<T>;
 }
 
-/**
- * Create Job: POST /jobs
- * Body: { customerId: "tunde1", workerId: "emeka1", title: "Brake repair", amountKobo: 1500000 }
- * Gracefully maps default IDs if backend was seeded with usr_tunde / usr_emeka.
- */
-export async function createJob(params?: CreateJobParams): Promise<Job> {
-  const customerId = params?.customerId || "tunde1";
-  const workerId = params?.workerId || "emeka1";
-  const title = params?.title || "Brake repair";
-  const amountKobo = params?.amountKobo ?? 1500000;
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(TOKEN_KEY);
+}
 
+export function setToken(token: string | null): void {
+  if (token) window.localStorage.setItem(TOKEN_KEY, token);
+  else window.localStorage.removeItem(TOKEN_KEY);
+}
+
+async function request<T>(endpoint: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+
+  let res: Response;
   try {
-    return await request<Job>("/jobs", {
-      method: "POST",
-      body: JSON.stringify({ customerId, workerId, title, amountKobo }),
+    res = await fetch(`${BASE_URL}${endpoint}`, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body === undefined ? null : JSON.stringify(options.body),
     });
-  } catch (err) {
-    // If backend seeded with usr_tunde / usr_emeka, retry with those ids
-    if (customerId === "tunde1" || workerId === "emeka1") {
-      try {
-        return await request<Job>("/jobs", {
-          method: "POST",
-          body: JSON.stringify({
-            customerId: "usr_tunde",
-            workerId: "usr_emeka",
-            title,
-            amountKobo,
-          }),
-        });
-      } catch (innerErr) {
-        console.error("Failed to create job with fallback IDs:", innerErr);
-        throw innerErr;
-      }
+  } catch {
+    throw new ApiError("NETWORK", "Can't reach the SureJob server. Check your connection and try again.", 0);
+  }
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    if (res.status === 401 && token) {
+      setToken(null);
+      window.dispatchEvent(new Event(LOGGED_OUT_EVENT));
     }
-    throw err;
+    throw new ApiError(data?.error?.code ?? "HTTP_ERROR", data?.error?.message ?? `Request failed (HTTP ${res.status})`, res.status);
   }
+  return data as T;
 }
 
-/**
- * Get Quote: POST /jobs/:id/quote (No body required) -> Returns { quoteId, premiumKobo, totalKobo }
- */
-export async function getQuote(jobId: string): Promise<QuoteResponse> {
-  return request<QuoteResponse>(`/jobs/${jobId}/quote`, {
-    method: "POST",
-  });
+// --- auth ----------------------------------------------------------------------
+
+export const login = (email: string, password: string) =>
+  request<AuthResult>("/auth/login", { method: "POST", body: { email, password } });
+
+export const register = (params: RegisterParams) => request<AuthResult>("/auth/register", { method: "POST", body: params });
+
+export const getMe = () => request<{ user: User }>("/auth/me").then((r) => r.user);
+
+// --- demo & config -----------------------------------------------------------------
+
+export const getConfig = () => request<{ modes: Modes }>("/config").then((r) => r.modes);
+
+// --- jobs ----------------------------------------------------------------------
+
+export const listWorkers = () => request<{ workers: WorkerSummary[] }>("/workers").then((r) => r.workers);
+
+export const listMyJobs = () => request<{ jobs: Job[] }>("/jobs").then((r) => r.jobs);
+
+export const createJob = (params: CreateJobParams) => request<Job>("/jobs", { method: "POST", body: params });
+
+export const getJob = (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}`);
+
+export const getQuote = (jobId: string) => request<Quote>(`/jobs/${encodeURIComponent(jobId)}/quote`, { method: "POST" });
+
+export const payEscrow = (jobId: string, quoteId: string) =>
+  request<Job>(`/jobs/${encodeURIComponent(jobId)}/pay`, { method: "POST", body: { quoteId } });
+
+/** Confirms as the logged-in user's side of the job. */
+export const confirmJob = (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}/confirm`, { method: "POST" });
+
+export const claimJob = (jobId: string, reason: ClaimReason, details: string) =>
+  request<Job>(`/jobs/${encodeURIComponent(jobId)}/claim`, { method: "POST", body: { reason, details } });
+
+// --- formatting ------------------------------------------------------------------
+
+export function formatNaira(kobo: number): string {
+  return "₦" + (kobo / 100).toLocaleString("en-NG", { maximumFractionDigits: 2 });
 }
 
-/**
- * Pay Escrow: POST /jobs/:id/pay (Body: { quoteId })
- */
-export async function payEscrow(jobId: string, data: { quoteId: string }): Promise<Job> {
-  return request<Job>(`/jobs/${jobId}/pay`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-/**
- * Get Status: GET /jobs/:id -> Returns full Job object, including the events array
- */
-export async function getJob(jobId: string): Promise<Job> {
-  return request<Job>(`/jobs/${jobId}`);
-}
-
-/**
- * Confirm: POST /jobs/:id/confirm (Body: { party: "customer" | "worker" }) -> Second confirmation returns payout.code
- */
-export async function confirmJob(jobId: string, data: { party: "customer" | "worker" }): Promise<Job> {
-  return request<Job>(`/jobs/${jobId}/confirm`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-/**
- * Claim: POST /jobs/:id/claim (Body: { filedBy: "customer", reason: "damage", details: "string" })
- */
-export async function claimJob(
-  jobId: string,
-  data: {
-    filedBy: "customer" | "worker";
-    reason: "damage" | "injury" | "not_done";
-    details?: string;
-  }
-): Promise<Job> {
-  return request<Job>(`/jobs/${jobId}/claim`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Something went wrong. Please try again.";
 }

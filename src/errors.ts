@@ -8,7 +8,11 @@ export type ErrorCode =
   | "INVALID_TRANSITION"
   | "QUOTE_REQUIRED"
   | "QUOTE_MISMATCH"
-  | "ADAPTER_ERROR";
+  | "ADAPTER_ERROR"
+  | "UNAUTHORIZED"
+  | "INVALID_CREDENTIALS"
+  | "FORBIDDEN"
+  | "EMAIL_TAKEN";
 
 export class DomainError extends Error {
   readonly code: ErrorCode;
