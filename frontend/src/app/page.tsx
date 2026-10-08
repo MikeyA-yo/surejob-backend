@@ -2,6 +2,56 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { motion, type Variants } from "framer-motion";
+
+// Core anti-gravity subtle glide-up variant
+const fadeInUpVariants: Variants = {
+  hidden: { opacity: 0, y: 24 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.65,
+      ease: [0.25, 0.1, 0.25, 1.0],
+    },
+  },
+};
+
+// Staggered container for 3 Pillars
+const staggerContainerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.15,
+      delayChildren: 0.1,
+    },
+  },
+};
+
+// Individual pillar card variant
+const pillarCardVariants: Variants = {
+  hidden: { opacity: 0, y: 24 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.6,
+      ease: [0.25, 0.1, 0.25, 1.0],
+    },
+  },
+};
+
+// Staggered container for Stats
+const statsContainerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.15,
+    },
+  },
+};
 
 function AnimatedStat({ value, suffix = "%", duration = 1600 }: { value: number; suffix?: string; duration?: number }) {
   const [count, setCount] = useState(0);
@@ -91,7 +141,13 @@ export default function Home() {
       <main>
         {/* 2. Hero Section */}
         <section className="py-24">
-          <div className="max-w-4xl mx-auto px-6 text-center">
+          <motion.div
+            className="max-w-4xl mx-auto px-6 text-center"
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, amount: 0.2 }}
+            variants={fadeInUpVariants}
+          >
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-[#0B3C4F] leading-tight">
               A payment and protection layer for Nigeria&apos;s informal service economy.
             </h1>
@@ -114,24 +170,39 @@ export default function Home() {
                 See How It Works
               </a>
             </div>
-          </div>
+          </motion.div>
         </section>
 
         {/* 3. The Problem (Stats Section) */}
         <section id="problem" className="py-24">
           <div className="max-w-5xl mx-auto px-6">
-            <div className="text-center mb-16">
+            <motion.div
+              className="text-center mb-16"
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, amount: 0.2 }}
+              variants={fadeInUpVariants}
+            >
               <span className="text-xs font-bold text-[#0B3C4F] uppercase tracking-wider block mb-2">
                 The Reality
               </span>
               <h2 className="text-3xl sm:text-4xl font-bold text-[#0B3C4F]">
                 The Informal Economy Runs Without a Safety Net
               </h2>
-            </div>
+            </motion.div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <motion.div
+              className="grid grid-cols-1 md:grid-cols-2 gap-8"
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, amount: 0.2 }}
+              variants={statsContainerVariants}
+            >
               {/* Stat 1 */}
-              <div className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#0B3C4F]/25 rounded-2xl p-8 sm:p-10 space-y-4 transition-all hover:-translate-y-0.5">
+              <motion.div
+                variants={fadeInUpVariants}
+                className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#0B3C4F]/25 rounded-2xl p-8 sm:p-10 space-y-4 transition-all hover:-translate-y-0.5"
+              >
                 <span className="text-5xl sm:text-6xl font-bold text-[#0B3C4F] block">
                   <AnimatedStat value={90} />
                 </span>
@@ -143,10 +214,13 @@ export default function Home() {
                     From auto mechanics to plumbers and electricians, over 80 million people work on verbal agreements without contract enforcement or deposit safety.
                   </p>
                 </div>
-              </div>
+              </motion.div>
 
               {/* Stat 2 */}
-              <div className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#0B3C4F]/25 rounded-2xl p-8 sm:p-10 space-y-4 transition-all hover:-translate-y-0.5">
+              <motion.div
+                variants={fadeInUpVariants}
+                className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#0B3C4F]/25 rounded-2xl p-8 sm:p-10 space-y-4 transition-all hover:-translate-y-0.5"
+              >
                 <span className="text-5xl sm:text-6xl font-bold text-[#0B3C4F] block">
                   <AnimatedStat value={26} />
                 </span>
@@ -158,26 +232,41 @@ export default function Home() {
                     Over a quarter of skilled service workers lack traditional bank accounts or smartphones on-site, making app-only digital fintechs unworkable.
                   </p>
                 </div>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
           </div>
         </section>
 
-        {/* 4. The Solution (3 Pillars) */}
+        {/* 4. The Solution (3 Pillars with Staggered Cascade) */}
         <section id="how-it-works" className="py-24">
           <div id="trust-layer" className="max-w-5xl mx-auto px-6">
-            <div className="text-center mb-16">
+            <motion.div
+              className="text-center mb-16"
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, amount: 0.2 }}
+              variants={fadeInUpVariants}
+            >
               <span className="text-xs font-bold text-[#0B3C4F] uppercase tracking-wider block mb-2">
                 The Solution
               </span>
               <h2 className="text-3xl sm:text-4xl font-bold text-[#0B3C4F]">
                 Three Pillars of Guaranteed Trust
               </h2>
-            </div>
+            </motion.div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <motion.div
+              className="grid grid-cols-1 md:grid-cols-3 gap-8"
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, amount: 0.2 }}
+              variants={staggerContainerVariants}
+            >
               {/* Pillar 1 */}
-              <div className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#1E3A2B]/30 rounded-2xl p-8 space-y-4 transition-all hover:-translate-y-0.5">
+              <motion.div
+                variants={pillarCardVariants}
+                className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#1E3A2B]/30 rounded-2xl p-8 space-y-4 transition-all hover:-translate-y-0.5"
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-[#0B3C4F]/10">
                   <span className="text-xs font-bold text-[#0B3C4F] uppercase tracking-wider block">
                     Pillar 01
@@ -190,10 +279,13 @@ export default function Home() {
                 <p className="text-sm font-normal text-[#14232B] leading-relaxed opacity-80">
                   Customers pay upfront with total confidence. Funds remain safely locked in regulated trustee custody and release only when you inspect and approve the job.
                 </p>
-              </div>
+              </motion.div>
 
               {/* Pillar 2 */}
-              <div className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#1E3A2B]/30 rounded-2xl p-8 space-y-4 transition-all hover:-translate-y-0.5">
+              <motion.div
+                variants={pillarCardVariants}
+                className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#1E3A2B]/30 rounded-2xl p-8 space-y-4 transition-all hover:-translate-y-0.5"
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-[#0B3C4F]/10">
                   <span className="text-xs font-bold text-[#0B3C4F] uppercase tracking-wider block">
                     Pillar 02
@@ -206,10 +298,13 @@ export default function Home() {
                 <p className="text-sm font-normal text-[#14232B] leading-relaxed opacity-80">
                   Every funded job is automatically covered against accidental property damage and worker injury via Curacel. Zero extra paperwork required.
                 </p>
-              </div>
+              </motion.div>
 
               {/* Pillar 3 */}
-              <div className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#1E3A2B]/30 rounded-2xl p-8 space-y-4 transition-all hover:-translate-y-0.5">
+              <motion.div
+                variants={pillarCardVariants}
+                className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#1E3A2B]/30 rounded-2xl p-8 space-y-4 transition-all hover:-translate-y-0.5"
+              >
                 <div className="flex items-center justify-between pb-3 border-b border-[#0B3C4F]/10">
                   <span className="text-xs font-bold text-[#0B3C4F] uppercase tracking-wider block">
                     Pillar 03
@@ -222,14 +317,20 @@ export default function Home() {
                 <p className="text-sm font-normal text-[#14232B] leading-relaxed opacity-80">
                   Workers withdraw earnings on-site at any Ecobank Xpress Point, agent kiosk, or ATM using a simple 6-digit code. No bank account or debit card needed.
                 </p>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
           </div>
         </section>
 
         {/* 5. Final CTA */}
         <section className="py-24">
-          <div className="max-w-4xl mx-auto px-6">
+          <motion.div
+            className="max-w-4xl mx-auto px-6"
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, amount: 0.2 }}
+            variants={fadeInUpVariants}
+          >
             <div className="bg-[#EEF4F6] border border-[#0B3C4F]/10 hover:border-[#0B3C4F]/20 rounded-2xl p-12 sm:p-16 text-center space-y-6 transition-all">
               <h2 className="text-3xl sm:text-4xl font-bold text-[#0B3C4F]">
                 Experience Nigeria&apos;s Informal Escrow MVP
@@ -248,7 +349,7 @@ export default function Home() {
                 </Link>
               </div>
             </div>
-          </div>
+          </motion.div>
         </section>
       </main>
 
