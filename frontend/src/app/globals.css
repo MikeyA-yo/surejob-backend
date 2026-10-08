@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --color-primary: #1E3A2B;
+  --color-primary-dark: #162E22;
+  --color-primary-light: #2D543F;
+  --color-background: #FAF9F5;
+  --color-foreground: #14232B;
+  --color-muted: #F2F5F2;
+  --color-muted-foreground: #5A6D61;
+  --color-border: #E1E8E2;
+  --color-card: #FFFFFF;
+  --color-accent: #EAF1EC;
+  --color-success: #1B8A5A;
+  --color-danger: #B23A48;
+}
+
+:root {
+  --primary: #1E3A2B;
+  --primary-dark: #162E22;
+  --background: #FAF9F5;
+  --foreground: #14232B;
+  --border: #E1E8E2;
+  --card: #FFFFFF;
+  --muted: #F2F5F2;
+  --muted-foreground: #5A6D61;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: #14232B;
+  background-color: #FAF9F5;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* HomeGuardian Signature Tech Grid Mask Patterns */
+.tech-grid-card {
+  background-image: 
+    linear-gradient(to right, rgba(30, 58, 43, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(30, 58, 43, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 0;
+  mask-image: 
+    repeating-linear-gradient(to right, black 0px, black 3px, transparent 3px, transparent 8px),
+    repeating-linear-gradient(to bottom, black 0px, black 3px, transparent 3px, transparent 8px),
+    radial-gradient(ellipse 75% 65% at 50% 0%, #000 60%, transparent 100%);
+  -webkit-mask-image: 
+    repeating-linear-gradient(to right, black 0px, black 3px, transparent 3px, transparent 8px),
+    repeating-linear-gradient(to bottom, black 0px, black 3px, transparent 3px, transparent 8px),
+    radial-gradient(ellipse 75% 65% at 50% 0%, #000 60%, transparent 100%);
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+  border-radius: 4px;
+}
