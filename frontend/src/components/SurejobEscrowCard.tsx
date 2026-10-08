@@ -151,7 +151,7 @@ export default function SurejobEscrowCard() {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[#0B3C4F]">
               Worker Payout Code
             </h2>
-            <span className="text-[11px] font-bold text-[#E6007E]">
+            <span className="text-[11px] font-bold text-[#1E3A2B]">
               Cash Release
             </span>
           </div>
@@ -164,7 +164,7 @@ export default function SurejobEscrowCard() {
           </p>
 
           <div className="p-4 bg-[#EEF4F6] rounded-xl flex items-center justify-between">
-            <span className="text-3xl sm:text-4xl font-black tracking-[0.3em] text-[#E6007E] font-mono pl-1">
+            <span className="text-3xl sm:text-4xl font-black tracking-[0.3em] text-[#1E3A2B] font-mono pl-1">
               4 8 2 9
             </span>
             <button
@@ -201,7 +201,7 @@ export default function SurejobEscrowCard() {
       {/* Fixed Call to Action Button:
           - Full width (inside max-w-[420px])
           - Exactly 48px high (h-12)
-          - Primary Button: bg-[#E6007E] or bg-[#0B3C4F] text-white
+          - Primary Button: bg-[#1E3A2B] or bg-[#0B3C4F] text-white
       */}
       <aside className="fixed bottom-0 left-0 right-0 p-4 bg-[#EEF4F6] z-50 flex justify-center">
         <div className="w-full max-w-[420px]">
@@ -211,7 +211,7 @@ export default function SurejobEscrowCard() {
             className={`w-full h-12 text-sm font-bold rounded-xl flex items-center justify-center shadow-sm cursor-pointer ${
               isReleased
                 ? "bg-[#0B3C4F] text-white"
-                : "bg-[#E6007E] text-white"
+                : "bg-[#1E3A2B] text-white hover:bg-[#162E22]"
             }`}
           >
             {isReleased ? "Code Authorized • Released" : "Authorize Release • N15,000"}
