@@ -61,6 +61,7 @@ async function main(): Promise<void> {
     log.info("listening", {
       url: `http://${config.host}:${config.port}`,
       store: store.kind,
+      cors: config.corsOrigins.join(","),
       payment: config.modes.payment,
       insurance: config.modes.insurance,
       payout: config.modes.payout,

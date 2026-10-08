@@ -101,7 +101,9 @@ const envSchema = z.object({
   DB_PATH: z.string().min(1).default("data/surejob.db"),
   MONGO_URI: z.string().trim().regex(/^mongodb(\+srv)?:\/\//, "must start with mongodb:// or mongodb+srv://").optional(),
   MONGO_DB: z.string().trim().min(1).default("surejob"),
-  CORS_ORIGINS: z.string().default("http://localhost:3000"),
+  // Any origin by default: the API authenticates with bearer tokens, not cookies, so cross-site
+  // requests cannot ride on a victim's session. Set a comma-separated list to restrict.
+  CORS_ORIGINS: z.string().default("*"),
 
   PAYMENT_MODE: mode,
   INSURANCE_MODE: mode,
