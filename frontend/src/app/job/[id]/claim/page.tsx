@@ -3,6 +3,7 @@
 import React, { use, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import { claimJob } from "@/api";
 
 export default function ClaimScreen({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -10,10 +11,29 @@ export default function ClaimScreen({ params }: { params: Promise<{ id: string }
   const [reason, setReason] = useState("Damage");
   const [details, setDetails] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
+    setSubmitting(true);
+    try {
+      const normalizedReason = reason.toLowerCase().includes("inj")
+        ? "injury"
+        : reason.toLowerCase().includes("not")
+        ? "not_done"
+        : "damage";
+
+      await claimJob(jobId, {
+        filedBy: "customer",
+        reason: normalizedReason,
+        details: details || "Claim filed by customer via mobile app",
+      });
+    } catch (err) {
+      console.error("Failed to submit claim:", err);
+    } finally {
+      setSubmitted(true);
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -31,6 +51,7 @@ export default function ClaimScreen({ params }: { params: Promise<{ id: string }
           <button
             type="button"
             onClick={handleSubmit}
+            disabled={submitting}
             className="w-full h-12 bg-[#B23A48] text-white font-bold rounded-xl flex items-center justify-center transition-opacity hover:opacity-95"
           >
             Submit Claim

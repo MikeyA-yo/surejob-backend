@@ -48,7 +48,7 @@ export default function HeroSection() {
         {/* Dual Pill CTA Buttons */}
         <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center items-center">
           <a
-            href="#cta"
+            href="/book"
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium transition-all bg-primary text-primary-foreground hover:bg-[#162E22] h-12 px-8 text-base shadow-sm group"
           >
             Lock Funds for a Job

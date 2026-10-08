@@ -1,17 +1,53 @@
 "use client";
 
-import React, { use, useState } from "react";
+import React, { use, useState, useEffect } from "react";
 import AppShell from "@/components/AppShell";
+import { getJob, confirmJob } from "@/api";
 
 export default function PayoutScreen({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const jobId = resolvedParams?.id || "1";
   const [copied, setCopied] = useState(false);
+  const [payoutCode, setPayoutCode] = useState<string>("84291");
+  const [amountStr, setAmountStr] = useState<string>("₦13,500");
 
-  const code = "8 4 2 9 1";
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPayout() {
+      try {
+        const job = await getJob(jobId);
+        if (isMounted && job) {
+          if (job.amountKobo) {
+            setAmountStr("₦" + (job.amountKobo / 100).toLocaleString("en-NG"));
+          }
+          if (job.payout?.code) {
+            setPayoutCode(job.payout.code);
+            return;
+          }
+        }
+
+        // If payout code not yet issued, trigger worker confirmation to complete second confirmation
+        const confirmedJob = await confirmJob(jobId, { party: "worker" });
+        if (isMounted && confirmedJob.payout?.code) {
+          setPayoutCode(confirmedJob.payout.code);
+        }
+      } catch (err) {
+        console.error("Failed to load payout code:", err);
+      }
+    }
+
+    loadPayout();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [jobId]);
+
+  const displayCode = payoutCode.split("").join(" ");
 
   const handleCopy = () => {
-    navigator.clipboard.writeText("84291");
+    navigator.clipboard.writeText(payoutCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -46,11 +82,11 @@ export default function PayoutScreen({ params }: { params: Promise<{ id: string 
           </span>
 
           <span className="text-5xl font-bold font-mono tracking-widest text-[#0B3C4F] block">
-            {code}
+            {displayCode}
           </span>
 
           <span className="text-sm font-normal text-[#14232B] block">
-            Amount: <strong className="font-bold text-[#0B3C4F]">₦13,500</strong>
+            Amount: <strong className="font-bold text-[#0B3C4F]">{amountStr}</strong>
           </span>
         </div>
       </div>

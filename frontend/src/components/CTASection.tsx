@@ -29,14 +29,13 @@ export default function CTASection() {
 
           {/* Dual Pill Action Buttons */}
           <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center items-center">
-            <button
-              type="button"
-              onClick={() => alert("Starting escrow creation modal...")}
+            <a
+              href="/book"
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all bg-primary text-primary-foreground hover:bg-[#162E22] h-12 px-8 text-base shadow-sm group"
             >
               Fund a Job with Escrow
               <ArrowRight className="size-4 group-hover:translate-x-0.5 transition-transform" />
-            </button>
+            </a>
             <button
               type="button"
               onClick={() => alert("Starting artisan onboarding...")}

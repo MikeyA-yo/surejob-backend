@@ -1,30 +1,84 @@
 "use client";
 
-import React, { use, useState } from "react";
+import React, { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { useRole } from "@/context/RoleContext";
+import { getJob, confirmJob, type Job } from "@/api";
 
 export default function EscrowStatusScreen({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const jobId = resolvedParams?.id || "1";
   const router = useRouter();
   const { role } = useRole();
-  const [confirmed, setConfirmed] = useState(false);
 
-  const handleConfirm = () => {
+  const [job, setJob] = useState<Job | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Poll GET /api/jobs/:id every 2 seconds to update timeline automatically
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchStatus = async () => {
+      try {
+        const data = await getJob(jobId);
+        if (isMounted && data) {
+          setJob(data);
+          if (data.confirmations?.customer || data.status === "PAID_OUT" || data.status === "CONFIRMED") {
+            setConfirmed(true);
+          }
+        }
+      } catch (err) {
+        console.error("Polling error for job status:", err);
+      }
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [jobId]);
+
+  const handleConfirm = async () => {
+    setSubmitting(true);
     setConfirmed(true);
-    setTimeout(() => {
-      router.push(`/job/${jobId}/payout`);
-    }, 400);
+    try {
+      const party = role === "worker" ? "worker" : "customer";
+      const updated = await confirmJob(jobId, { party });
+      setJob(updated);
+
+      // If customer confirmed, also trigger worker confirmation for the demo payout code
+      if (party === "customer") {
+        try {
+          await confirmJob(jobId, { party: "worker" });
+        } catch (workerErr) {
+          console.error("Auto worker confirmation demo error:", workerErr);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to confirm job:", err);
+    } finally {
+      setTimeout(() => {
+        router.push(`/job/${jobId}/payout`);
+      }, 400);
+    }
   };
 
+  const isPaid = !job || job.status !== "BOOKED" || job.events?.some((e) => e.type === "payment.escrowed");
+  const isEscrowed = !job || job.status !== "BOOKED" || job.events?.some((e) => e.type === "payment.escrowed");
+  const isInsured = !job || job.status !== "BOOKED" || job.events?.some((e) => e.type === "policy.issued");
+  const isStepDone = confirmed || (job ? (job.confirmations?.customer || job.status === "CONFIRMED" || job.status === "PAID_OUT") : false);
+
   const steps = [
-    { name: "Paid", done: true },
-    { name: "Held in escrow", done: true },
-    { name: "Cover issued", done: true },
-    { name: "In progress", done: confirmed },
+    { name: "Paid", done: isPaid },
+    { name: "Held in escrow", done: isEscrowed },
+    { name: "Cover issued", done: isInsured },
+    { name: "In progress", done: isStepDone },
   ];
 
   return (
@@ -34,6 +88,7 @@ export default function EscrowStatusScreen({ params }: { params: Promise<{ id: s
         <button
           type="button"
           onClick={handleConfirm}
+          disabled={submitting}
           className="w-full h-12 bg-[#0B3C4F] text-white font-bold rounded-xl flex items-center justify-center transition-opacity hover:opacity-95"
         >
           {confirmed ? "Confirmed" : "Confirm Job Done"}
@@ -46,7 +101,7 @@ export default function EscrowStatusScreen({ params }: { params: Promise<{ id: s
             Escrow Status
           </h1>
           <p className="text-sm font-normal text-[#14232B] mt-1 opacity-70">
-            Mechanic, Brake repair • ₦15,000
+            {job?.title || "Mechanic, Brake repair"} • ₦{job?.amountKobo ? (job.amountKobo / 100).toLocaleString("en-NG") : "15,000"}
           </p>
         </div>
 

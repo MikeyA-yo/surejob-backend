@@ -1,19 +1,43 @@
 "use client";
 
-import React from "react";
-import Link from "next/link";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
+import { createJob } from "@/api";
 
 export default function BookScreen() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  const handleContinue = async () => {
+    setLoading(true);
+    try {
+      const job = await createJob({
+        customerId: "tunde1",
+        workerId: "emeka1",
+        title: "Brake repair",
+        amountKobo: 1500000,
+      });
+      router.push(`/job/${job.id}/pay`);
+    } catch (err) {
+      console.error("Failed to create job:", err);
+      router.push("/job/1/pay");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <AppShell
       bottomAction={
-        <Link
-          href="/job/1/pay"
+        <button
+          type="button"
+          onClick={handleContinue}
+          disabled={loading}
           className="w-full h-12 bg-[#0B3C4F] text-white font-bold rounded-xl flex items-center justify-center transition-opacity hover:opacity-95"
         >
           Continue
-        </Link>
+        </button>
       }
     >
       <div className="space-y-6">

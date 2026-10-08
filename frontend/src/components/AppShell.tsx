@@ -21,6 +21,7 @@ export default function AppShell({
   const pathname = usePathname();
 
   const screens = [
+    { label: "Home", href: "/" },
     { label: "Book", href: "/book" },
     { label: "Pay", href: "/job/1/pay" },
     { label: "Status", href: "/job/1" },
@@ -46,9 +47,9 @@ export default function AppShell({
                   <ChevronLeft className="size-4" />
                 </Link>
               )}
-              <span className="text-xl font-bold text-[#0B3C4F] tracking-tight">
+              <Link href="/" className="text-xl font-bold text-[#0B3C4F] tracking-tight">
                 SureJob
-              </span>
+              </Link>
             </div>
 
             <span className="text-xs font-normal text-[#0B3C4F] bg-[#EEF4F6] px-2.5 py-1 rounded-full">

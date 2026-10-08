@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
-import { ShieldCheck, Menu, X, ArrowRight, Lock } from "lucide-react";
+import Link from "next/link";
+import { ShieldCheck, Menu, X, ArrowRight, Lock, Smartphone } from "lucide-react";
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -11,7 +12,7 @@ export default function Navbar() {
       <div className="px-6 max-w-7xl mx-auto">
         <nav className="h-20 flex items-center justify-between w-full">
           {/* Brand Logo */}
-          <a href="#" className="flex items-center gap-2.5 font-semibold text-xl tracking-tight text-foreground group">
+          <Link href="/" className="flex items-center gap-2.5 font-semibold text-xl tracking-tight text-foreground group">
             <div className="size-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground shadow-xs group-hover:scale-105 transition-transform">
               <ShieldCheck className="size-5" />
             </div>
@@ -19,7 +20,7 @@ export default function Navbar() {
             <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-primary/10 text-primary border border-primary/20">
               <Lock className="size-2.5" /> Escrow
             </span>
-          </a>
+          </Link>
 
           {/* Centered Pill Navigation (HomeGuardian Style) */}
           <div className="hidden md:flex">
@@ -77,18 +78,19 @@ export default function Navbar() {
 
           {/* Action Buttons on Right */}
           <div className="hidden sm:flex items-center gap-3">
-            <a
-              href="#how-it-works"
-              className="text-sm font-medium text-foreground/80 hover:text-primary px-3 py-2 transition-colors"
+            <Link
+              href="/book"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary bg-primary/8 hover:bg-primary/15 px-3 py-1.5 rounded-full border border-primary/20 transition-colors"
             >
-              Track Contract
-            </a>
-            <a
-              href="#cta"
+              <Smartphone className="size-3.5" />
+              <span>MVP App</span>
+            </Link>
+            <Link
+              href="/book"
               className="inline-flex items-center justify-center gap-2 rounded-full font-medium transition-all bg-primary text-primary-foreground hover:bg-[#162E22] h-10 px-5 text-sm shadow-xs"
             >
               Lock a Job <ArrowRight className="size-3.5" />
-            </a>
+            </Link>
           </div>
 
           {/* Mobile Menu Trigger */}
@@ -153,13 +155,13 @@ export default function Navbar() {
               </a>
             </li>
             <li className="pt-2 border-t border-border flex flex-col gap-2">
-              <a
-                href="#cta"
+              <Link
+                href="/book"
                 onClick={() => setMobileMenuOpen(false)}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-full font-medium bg-primary text-primary-foreground hover:bg-[#162E22] h-11 px-6 text-sm"
               >
                 Lock a Job <ArrowRight className="size-4" />
-              </a>
+              </Link>
             </li>
           </ul>
         </div>
