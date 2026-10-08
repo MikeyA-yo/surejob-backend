@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   const seededJobId = await jobs.ensureSeeded();
   if (seededJobId) log.info("seeded empty database", { jobId: seededJobId });
 
-  const app = createApp({ jobs, auth, logger: log, corsOrigins: config.corsOrigins });
+  const app = createApp({ jobs, auth, logger: log });
   const server = app.listen(config.port, config.host, (err) => {
     if (err) {
       log.error("failed to start", { error: err.message });
@@ -61,7 +61,6 @@ async function main(): Promise<void> {
     log.info("listening", {
       url: `http://${config.host}:${config.port}`,
       store: store.kind,
-      cors: config.corsOrigins.join(","),
       payment: config.modes.payment,
       insurance: config.modes.insurance,
       payout: config.modes.payout,

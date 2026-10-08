@@ -50,11 +50,10 @@ describe("config", () => {
   });
 
   it("parses modes, latency and failure drills", () => {
-    const config = loadConfig({ INSURANCE_MODE: "live", MOCK_LATENCY_MS: "0", MOCK_FAIL: "pay, Payout", CORS_ORIGINS: "*" });
+    const config = loadConfig({ INSURANCE_MODE: "live", MOCK_LATENCY_MS: "0", MOCK_FAIL: "pay, Payout" });
     assert.equal(config.modes.insurance, "live");
     assert.deepEqual(config.mock.latency, { minMs: 0, maxMs: 0 });
     assert.deepEqual(config.mock.failOnce, ["pay", "payout"]);
-    assert.deepEqual(config.corsOrigins, ["*"]);
   });
 
   it("rejects bad values with a readable message", () => {

@@ -1,9 +1,9 @@
+import cors from "cors";
 import express, { type Express, type RequestHandler } from "express";
 import swaggerUi from "swagger-ui-express";
 import type { AuthService } from "../auth/service.ts";
 import type { JobService } from "../jobs/service.ts";
 import type { Logger } from "../logger.ts";
-import { cors } from "./cors.ts";
 import { errorHandler, notFoundHandler } from "./errors.ts";
 import { openApiDocument } from "./openapi.ts";
 import { apiRoutes } from "./routes.ts";
@@ -12,15 +12,15 @@ export interface AppOptions {
   jobs: JobService;
   auth: AuthService;
   logger: Logger;
-  corsOrigins: readonly string[];
 }
 
-export function createApp({ jobs, auth, logger, corsOrigins }: AppOptions): Express {
+export function createApp({ jobs, auth, logger }: AppOptions): Express {
   const app = express();
   app.disable("x-powered-by");
 
   app.use(requestLog(logger));
-  app.use(cors(corsOrigins));
+  // Any origin: auth uses bearer tokens, not cookies, so this is safe for the API.
+  app.use(cors());
   app.use(express.json({ limit: "32kb" }));
 
   app.get("/healthz", (_req, res) => {

@@ -10,8 +10,6 @@ export interface Config {
   /** When set, MongoDB is the store (e.g. on Render, whose disk is wiped on every deploy). */
   mongoUri: string | null;
   mongoDb: string;
-  /** Allowed browser origins. "*" allows any. */
-  corsOrigins: readonly string[];
   modes: Modes;
   mock: {
     latency: { minMs: number; maxMs: number };
@@ -101,9 +99,6 @@ const envSchema = z.object({
   DB_PATH: z.string().min(1).default("data/surejob.db"),
   MONGO_URI: z.string().trim().regex(/^mongodb(\+srv)?:\/\//, "must start with mongodb:// or mongodb+srv://").optional(),
   MONGO_DB: z.string().trim().min(1).default("surejob"),
-  // Any origin by default: the API authenticates with bearer tokens, not cookies, so cross-site
-  // requests cannot ride on a victim's session. Set a comma-separated list to restrict.
-  CORS_ORIGINS: z.string().default("*"),
 
   PAYMENT_MODE: mode,
   INSURANCE_MODE: mode,
@@ -151,9 +146,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dbPath: e.DB_PATH,
     mongoUri: e.MONGO_URI ?? null,
     mongoDb: e.MONGO_DB,
-    corsOrigins: e.CORS_ORIGINS.split(",")
-      .map((o) => o.trim())
-      .filter(Boolean),
     modes: { payment: e.PAYMENT_MODE, insurance: e.INSURANCE_MODE, payout: e.PAYOUT_MODE },
     mock: { latency: e.MOCK_LATENCY_MS, failOnce: e.MOCK_FAIL },
     jobs: { maxAmountKobo: e.MAX_JOB_AMOUNT_KOBO, coverDurationDays: e.COVER_DURATION_DAYS },

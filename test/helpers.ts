@@ -60,7 +60,7 @@ export async function startTestServer(options: TestServerOptions = {}): Promise<
   const auth = new AuthService({ store, tokens: new TokenService("test-secret-test-secret-test-secret", "1h"), logger: silentLogger });
   const seedJobId = (await jobs.ensureSeeded())!;
 
-  const app = createApp({ jobs, auth, logger: silentLogger, corsOrigins: ["http://localhost:3000"] });
+  const app = createApp({ jobs, auth, logger: silentLogger });
   const server = await new Promise<Server>((resolve) => {
     const s = app.listen(0, "127.0.0.1", () => resolve(s));
   });
