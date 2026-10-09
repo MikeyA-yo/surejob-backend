@@ -38,6 +38,7 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
     payoutExpiresAt: null,
     customerConfirmedAt: null,
     workerConfirmedAt: null,
+    pendingOffer: null,
     modes: { payment: "mock", insurance: "mock", payout: "mock" },
     createdAt: "2026-10-09T10:00:00.000Z",
     claim: null,
@@ -140,6 +141,23 @@ function storeContract(name: string, open: () => Promise<{ store: Store; cleanup
       assert.deepEqual(updated?.claim, claim);
       assert.deepEqual(updated?.events.map((e) => e.type), ["job.booked", "a", "b"]);
       assert.deepEqual(await store.getJob(j.id), updated);
+    });
+
+    it("updateJob sets and clears a price offer and changes the amount", async () => {
+      const j = job();
+      await store.insertJob(j);
+      const offer = { by: "worker" as const, amountKobo: 1_800_000, at: "2026-10-09T10:30:00.000Z" };
+      const offered = await store.updateJob(j.id, { expectStatus: "BOOKED", set: { pendingOffer: offer }, events: [] });
+      assert.deepEqual(offered?.pendingOffer, offer);
+      assert.deepEqual((await store.getJob(j.id))?.pendingOffer, offer);
+
+      const agreed = await store.updateJob(j.id, {
+        expectStatus: "BOOKED",
+        set: { amountKobo: 1_800_000, pendingOffer: null, quoteId: null, premiumKobo: null },
+        events: [],
+      });
+      assert.equal(agreed?.amountKobo, 1_800_000);
+      assert.equal(agreed?.pendingOffer, null);
     });
 
     it("updateJob changes nothing and returns null when the status moved on or the job is gone", async () => {

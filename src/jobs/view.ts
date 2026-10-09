@@ -18,6 +18,8 @@ export interface JobView {
   totalKobo: number;
   quoteId: string | null;
   customer: { id: string; name: string };
+  /** An open price proposal (BOOKED jobs with a registered worker); the job's price changes only when the other side accepts. */
+  pendingOffer: { by: Party; amountKobo: number; at: string } | null;
   /** onPlatform false: added by the customer, has no account; the customer's confirmation releases payout. */
   worker: { id: string; name: string; onPlatform: boolean };
   /** The viewer's side of this job. */
@@ -71,6 +73,7 @@ export function toJobView(job: JobRecord, customer: UserRecord, worker: UserReco
     premiumKobo: job.premiumKobo,
     totalKobo: job.amountKobo + (job.premiumKobo ?? 0),
     quoteId: job.quoteId,
+    pendingOffer: job.pendingOffer,
     customer: { id: customer.id, name: customer.name },
     worker: { id: worker.id, name: worker.name, onPlatform: workerOnPlatform },
     you: viewer,

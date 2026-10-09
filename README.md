@@ -19,6 +19,7 @@ npm start            # same without watch
 npm run demo         # in another terminal: book → quote → pay → confirm ×2 → payout code
 npm run demo:claim   # book → quote → pay → claim
 bash scripts/demo.sh offplatform  # book a worker who is not on SureJob; the customer's confirmation pays out
+bash scripts/demo.sh bargain      # Emeka asks for more, Tunde counters, Emeka accepts, then pay and confirm
 npm test             # API + unit tests on an in-memory DB
                      # (set MONGO_TEST_URI to also run the store tests against MongoDB)
 npm run typecheck
@@ -43,6 +44,12 @@ JWT to send as `Authorization: Bearer <token>`. Set `JWT_SECRET` in production. 
 token to decide who is acting: only the job's customer can quote and pay, each side confirms as itself,
 and the payout code is only returned to the worker. `/api/config`, `/api/demo/reset`, `/healthz` and
 `/docs` stay public.
+
+**Price negotiation:** while a job is BOOKED and the worker has an account, either side can propose a
+price (`POST /api/jobs/:id/offer`), and the other side accepts (`/offer/accept`), declines
+(`/offer/decline`, which also withdraws your own) or counters with a new offer. The price changes only
+on accept; any earlier quote is discarded so payment always matches the agreed price. Quote and pay
+return `409 OFFER_PENDING` while an offer is open. `bash scripts/demo.sh bargain` runs it end to end.
 
 **Workers not on SureJob:** a customer can book someone without an account by sending
 `newWorker: { name, phone, trade? }` instead of `workerId`. That worker can't log in, so the customer's
@@ -77,7 +84,7 @@ in mock mode but may be `null` with live XpressCash, whose documented response h
 | --- | --- |
 | 400 | `VALIDATION_ERROR`, `INVALID_JSON` |
 | 404 | `NOT_FOUND` |
-| 409 | `INVALID_TRANSITION`, `QUOTE_REQUIRED`, `QUOTE_MISMATCH` |
+| 409 | `INVALID_TRANSITION`, `QUOTE_REQUIRED`, `QUOTE_MISMATCH`, `OFFER_PENDING`, `EMAIL_TAKEN` |
 | 502 | `ADAPTER_ERROR` (provider call failed; the job stays where it was, so retry the same request) |
 
 No auth in the POC. Do not describe it as secure.

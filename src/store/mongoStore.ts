@@ -71,12 +71,12 @@ export class MongoStore implements Store {
       .find({ $or: [{ customerId: userId }, { workerId: userId }] })
       .sort({ createdAt: -1 })
       .toArray();
-    return docs.map(fromDoc);
+    return docs.map(jobFromDoc);
   }
 
   async getJob(id: string): Promise<JobRecord | null> {
     const doc = await this.#jobs.findOne({ _id: id });
-    return doc ? fromDoc(doc) : null;
+    return doc ? jobFromDoc(doc) : null;
   }
 
   async insertJob(job: JobRecord): Promise<void> {
@@ -93,7 +93,7 @@ export class MongoStore implements Store {
     const doc = await this.#jobs.findOneAndUpdate({ _id: id, status: update.expectStatus }, ops, {
       returnDocument: "after",
     });
-    return doc ? fromDoc(doc) : null;
+    return doc ? jobFromDoc(doc) : null;
   }
 
   async appendEvents(id: string, events: EventRecord[]): Promise<void> {
@@ -131,6 +131,12 @@ function toDoc<T extends { id: string }>(record: T): Omit<T, "id"> & { _id: stri
 function fromDoc<T extends { _id: string }>(doc: T): Omit<T, "_id"> & { id: string } {
   const { _id, ...rest } = doc;
   return { id: _id, ...rest };
+}
+
+/** Jobs written before a field existed lack it; fill the defaults. */
+function jobFromDoc(doc: JobDoc): JobRecord {
+  const job = fromDoc(doc);
+  return { ...job, pendingOffer: job.pendingOffer ?? null };
 }
 
 function withoutUndefined<T extends object>(obj: T): Partial<T> {

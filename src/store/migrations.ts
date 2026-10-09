@@ -60,6 +60,12 @@ const MIGRATIONS: readonly string[] = [
   CREATE INDEX jobs_by_customer ON jobs (customer_id, created_at);
   CREATE INDEX jobs_by_worker ON jobs (worker_id, created_at);
   `,
+  // 3: price negotiation (one open offer per job).
+  `
+  ALTER TABLE jobs ADD COLUMN offer_by TEXT CHECK (offer_by IN ('customer', 'worker'));
+  ALTER TABLE jobs ADD COLUMN offer_amount_kobo INTEGER CHECK (offer_amount_kobo > 0);
+  ALTER TABLE jobs ADD COLUMN offer_at TEXT;
+  `,
 ];
 
 export function migrate(db: DatabaseSync): void {

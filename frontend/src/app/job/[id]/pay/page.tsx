@@ -1,6 +1,7 @@
 "use client";
 
 import React, { use, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { Card, ErrorNote, PrimaryButton } from "@/components/ui";
@@ -30,6 +31,7 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
           router.replace(`/job/${jobId}`);
           return;
         }
+        if (current.pendingOffer) return; // the price isn't settled yet
         setQuote(await getQuote(jobId));
       } catch (err) {
         setError(errorMessage(err));
@@ -71,6 +73,19 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
 
         <ErrorNote message={error} />
 
+        {job?.pendingOffer && (
+          <Card>
+            <p className="text-sm text-[#14232B]">
+              {job.pendingOffer.by === "worker" ? `${job.worker.name} proposed` : "You proposed"}{" "}
+              <strong className="text-[#0B3C4F]">{formatNaira(job.pendingOffer.amountKobo)}</strong>. Agree on the price
+              before paying.
+            </p>
+            <Link href={`/job/${jobId}`} className="inline-block mt-3 text-sm font-bold text-[#0B3C4F] underline">
+              Respond to the offer
+            </Link>
+          </Card>
+        )}
+
         <Card label="Cost breakdown">
           {quote && job ? (
             <div className="space-y-4 mt-3">
@@ -82,9 +97,17 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
               </div>
             </div>
           ) : (
-            !error && <p className="text-sm opacity-60 mt-2">Getting your cover quote…</p>
+            !error && !job?.pendingOffer && <p className="text-sm opacity-60 mt-2">Getting your cover quote…</p>
           )}
         </Card>
+
+        {job?.worker.onPlatform && !job.pendingOffer && (
+          <div className="text-center">
+            <Link href={`/job/${jobId}`} className="text-sm font-bold text-[#0B3C4F] hover:underline">
+              Want a different price? Negotiate with {job.worker.name}.
+            </Link>
+          </div>
+        )}
 
         {quote && quote.coverage.length > 0 && (
           <Card label="What the cover includes">

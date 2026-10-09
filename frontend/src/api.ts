@@ -49,6 +49,8 @@ export interface Job {
   premiumKobo: number | null;
   totalKobo: number;
   quoteId: string | null;
+  /** Open price proposal (BOOKED jobs with a registered worker). The price changes only when the other side accepts. */
+  pendingOffer: { by: Party; amountKobo: number; at: string } | null;
   customer: { id: string; name: string };
   /** onPlatform false: no account; the customer's confirmation releases payout and the customer sees the code. */
   worker: { id: string; name: string; onPlatform: boolean };
@@ -177,6 +179,17 @@ export const getQuote = (jobId: string) => request<Quote>(`/jobs/${encodeURIComp
 
 export const payEscrow = (jobId: string, quoteId: string) =>
   request<Job>(`/jobs/${encodeURIComponent(jobId)}/pay`, { method: "POST", body: { quoteId } });
+
+/** Proposes a new price, or counters the other side's offer. */
+export const offerPrice = (jobId: string, amountKobo: number) =>
+  request<Job>(`/jobs/${encodeURIComponent(jobId)}/offer`, { method: "POST", body: { amountKobo } });
+
+export const acceptOffer = (jobId: string) =>
+  request<Job>(`/jobs/${encodeURIComponent(jobId)}/offer/accept`, { method: "POST" });
+
+/** Declines the other side's offer, or withdraws your own. */
+export const declineOffer = (jobId: string) =>
+  request<Job>(`/jobs/${encodeURIComponent(jobId)}/offer/decline`, { method: "POST" });
 
 /** Confirms as the logged-in user's side of the job. */
 export const confirmJob = (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}/confirm`, { method: "POST" });

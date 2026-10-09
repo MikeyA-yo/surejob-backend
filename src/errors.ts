@@ -12,7 +12,8 @@ export type ErrorCode =
   | "UNAUTHORIZED"
   | "INVALID_CREDENTIALS"
   | "FORBIDDEN"
-  | "EMAIL_TAKEN";
+  | "EMAIL_TAKEN"
+  | "OFFER_PENDING";
 
 export class DomainError extends Error {
   readonly code: ErrorCode;
