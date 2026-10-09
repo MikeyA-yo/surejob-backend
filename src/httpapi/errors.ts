@@ -13,6 +13,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   INVALID_CREDENTIALS: 401,
   FORBIDDEN: 403,
   EMAIL_TAKEN: 409,
+  OFFER_PENDING: 409,
 };
 
 /** Contract error shape: `{ error: { code, message } }`. */

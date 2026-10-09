@@ -4,7 +4,7 @@ import type { AuthResult } from "../auth/service.ts";
 import type { WorkerSummary } from "../jobs/service.ts";
 import { JOB_STATUSES } from "../jobs/stateMachine.ts";
 import type { JobView, QuoteView } from "../jobs/view.ts";
-import { claimBody, createJobBody, loginBody, newWorkerBody, payBody, registerBody } from "./schemas.ts";
+import { claimBody, createJobBody, loginBody, newWorkerBody, offerBody, payBody, registerBody } from "./schemas.ts";
 
 // ---------------------------------------------------------------------------
 // Response schemas. These exist only for the docs; the compile-time checks below
@@ -71,6 +71,18 @@ const job = z
     premiumKobo: z.number().int().nullable().meta({ description: "null until quoted.", example: 30_000 }),
     totalKobo: z.number().int().meta({ description: "amountKobo + premiumKobo (premium counts as 0 until quoted).", example: 1_530_000 }),
     quoteId: z.string().nullable().meta({ description: "Latest quote; pass it to /pay.", example: "QTE-7KQ2M9XA" }),
+    pendingOffer: z
+      .object({
+        by: party,
+        amountKobo: z.number().int().meta({ example: 1_800_000 }),
+        at: z.string().meta({ example: "2026-10-09T10:00:00.000Z" }),
+      })
+      .nullable()
+      .meta({
+        description:
+          "Open price proposal on a BOOKED job with a registered worker. The other side accepts, declines or counters; " +
+          "the customer cannot quote or pay while it is open.",
+      }),
     customer: z.object({ id: z.string(), name: z.string() }),
     worker: z.object({
       id: z.string(),
@@ -266,6 +278,57 @@ const paths = {
       responses: { 200: ok("The job.", "Job"), 401: unauthorized, 403: forbiddenJob, 404: notFound },
     },
   },
+  "/api/jobs/{id}/offer": {
+    post: {
+      tags: ["Negotiation"],
+      summary: "Propose or counter a price",
+      description:
+        "Either side of a BOOKED job with a registered worker proposes a new price, or counters the other side's offer. " +
+        "The job's price only changes when the other side accepts. Replaces any open offer.",
+      parameters: [jobIdParam],
+      requestBody: { required: true, content: jsonBody("OfferRequest") },
+      responses: {
+        200: ok("The job with pendingOffer set.", "Job"),
+        400: fail("VALIDATION_ERROR: bad amount, over the cap, or equal to the current price."),
+        401: unauthorized,
+        403: fail("FORBIDDEN: not part of this job, or the worker has no SureJob account."),
+        404: notFound,
+        409: fail("INVALID_TRANSITION: the job is already paid for."),
+      },
+    },
+  },
+  "/api/jobs/{id}/offer/accept": {
+    post: {
+      tags: ["Negotiation"],
+      summary: "Accept the open offer",
+      description:
+        "The side that did not make the offer accepts it: it becomes the job's price, and any earlier quote is discarded " +
+        "so the customer re-quotes at the new price.",
+      parameters: [jobIdParam],
+      responses: {
+        200: ok("The job at its new price.", "Job"),
+        401: unauthorized,
+        403: fail("FORBIDDEN: it's your own offer, you're not part of this job, or the worker has no account."),
+        404: notFound,
+        409: fail("INVALID_TRANSITION: no open offer, or the job is already paid for."),
+      },
+    },
+  },
+  "/api/jobs/{id}/offer/decline": {
+    post: {
+      tags: ["Negotiation"],
+      summary: "Decline or withdraw the open offer",
+      description: "Clears the open offer; the price stays as it was. Declines the other side's offer, or withdraws your own.",
+      parameters: [jobIdParam],
+      responses: {
+        200: ok("The job with no open offer.", "Job"),
+        401: unauthorized,
+        403: forbiddenJob,
+        404: notFound,
+        409: fail("INVALID_TRANSITION: no open offer, or the job is already paid for."),
+      },
+    },
+  },
   "/api/jobs/{id}/quote": {
     post: {
       tags: ["Lifecycle"],
@@ -278,7 +341,7 @@ const paths = {
         401: unauthorized,
         403: forbiddenJob,
         404: notFound,
-        409: fail("INVALID_TRANSITION: the job is not BOOKED."),
+        409: fail("INVALID_TRANSITION: the job is not BOOKED. OFFER_PENDING: answer the open price offer first."),
         502: adapterFailed,
       },
     },
@@ -300,8 +363,8 @@ const paths = {
         403: forbiddenJob,
         404: notFound,
         409: fail(
-          "QUOTE_REQUIRED: no quote yet. QUOTE_MISMATCH: quoteId is not the latest quote. " +
-            "INVALID_TRANSITION: the job is past payment.",
+          "QUOTE_REQUIRED: no quote yet (or the price changed since). QUOTE_MISMATCH: quoteId is not the latest quote. " +
+            "OFFER_PENDING: answer the open price offer first. INVALID_TRANSITION: the job is past payment.",
         ),
         502: adapterFailed,
       },
@@ -356,6 +419,7 @@ export function openApiDocument(): Record<string, unknown> {
     loginBody,
     createJobBody,
     newWorkerBody,
+    offerBody,
     payBody,
     claimBody,
     user,
@@ -408,6 +472,7 @@ export function openApiDocument(): Record<string, unknown> {
       { name: "Auth", description: "Accounts and sessions." },
       { name: "Demo", description: "Configuration and demo controls (no login needed)." },
       { name: "Jobs", description: "Create and read jobs." },
+      { name: "Negotiation", description: "Bargaining over the price before payment (registered workers only)." },
       { name: "Lifecycle", description: "State transitions. Anything out of order returns 409 INVALID_TRANSITION." },
     ],
     security: [{ bearerAuth: [] }],

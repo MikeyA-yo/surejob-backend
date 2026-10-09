@@ -41,6 +41,13 @@ export interface ClaimRecord {
   createdAt: string;
 }
 
+/** A price proposal awaiting the other side's answer. */
+export interface PriceOffer {
+  by: Party;
+  amountKobo: number;
+  at: string;
+}
+
 /** A job with its claim and event timeline, as every store returns it. Times are ISO 8601. */
 export interface JobRecord {
   id: string;
@@ -58,6 +65,8 @@ export interface JobRecord {
   payoutExpiresAt: string | null;
   customerConfirmedAt: string | null;
   workerConfirmedAt: string | null;
+  /** Open price proposal while the job is BOOKED; null when none. */
+  pendingOffer: PriceOffer | null;
   /** The mode each adapter actually ran in for this job. */
   modes: Modes;
   createdAt: string;
@@ -68,6 +77,8 @@ export interface JobRecord {
 export type JobPatch = Partial<
   Pick<
     JobRecord,
+    | "amountKobo"
+    | "pendingOffer"
     | "premiumKobo"
     | "status"
     | "quoteId"

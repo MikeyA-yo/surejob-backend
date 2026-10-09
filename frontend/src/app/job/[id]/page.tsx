@@ -7,7 +7,8 @@ import AppShell from "@/components/AppShell";
 import { Card, ErrorNote, PrimaryButton } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { confirmJob, errorMessage, formatNaira, getJob, type Job } from "@/api";
-import { STATUS_LABELS } from "@/lib/jobStatus";
+import PriceNegotiation from "@/components/PriceNegotiation";
+import { canNegotiate, STATUS_LABELS } from "@/lib/jobStatus";
 
 const POLL_MS = 2000;
 const FINISHED: Job["status"][] = ["PAID_OUT", "CLAIM_FILED"];
@@ -83,6 +84,8 @@ export default function EscrowStatusScreen({ params }: { params: Promise<{ id: s
               <Guidance job={job} />
             </Card>
 
+            {canNegotiate(job) && <PriceNegotiation job={job} onChange={setJob} />}
+
             <Card label="Progress">
               <Timeline job={job} />
             </Card>
@@ -120,7 +123,13 @@ function Guidance({ job }: { job: Job }) {
 
   switch (job.status) {
     case "BOOKED":
-      text = job.you === "customer" ? "Pay into escrow to start the job." : "Waiting for the customer to pay into escrow.";
+      if (job.pendingOffer && job.pendingOffer.by !== job.you) text = "You have a price offer to answer below.";
+      else if (job.pendingOffer) text = "Waiting for an answer to your price offer.";
+      else if (job.you === "customer") {
+        text = job.worker.onPlatform
+          ? "Pay into escrow to start the job, or propose a different price below."
+          : "Pay into escrow to start the job.";
+      } else text = "Waiting for the customer to pay. You can propose a different price below.";
       break;
     case "ESCROWED":
       text = "Payment is held. Cover is being issued.";
@@ -152,6 +161,13 @@ function PrimaryAction({ job, busy, onConfirm }: { job: Job; busy: boolean; onCo
     "w-full h-12 bg-[#0B3C4F] text-white font-bold rounded-xl flex items-center justify-center transition-opacity hover:opacity-95";
 
   if (job.status === "BOOKED" && job.you === "customer") {
+    if (job.pendingOffer) {
+      return (
+        <PrimaryButton disabled onClick={() => undefined}>
+          Agree on the price to continue
+        </PrimaryButton>
+      );
+    }
     return (
       <Link href={`/job/${job.id}/pay`} className={linkClass}>
         Continue to payment
@@ -224,7 +240,9 @@ function Timeline({ job }: { job: Job }) {
           </div>
         );
       })}
-      {!paidOrLater && <p className="text-xs opacity-60 mt-4">Nothing is charged until you pay into escrow.</p>}
+      {!paidOrLater && job.you === "customer" && (
+        <p className="text-xs opacity-60 mt-4">Nothing is charged until you pay into escrow.</p>
+      )}
     </div>
   );
 }

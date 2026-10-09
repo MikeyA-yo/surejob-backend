@@ -3,7 +3,7 @@ import type { AuthService } from "../auth/service.ts";
 import type { JobService } from "../jobs/service.ts";
 import { toUserView } from "../jobs/view.ts";
 import type { UserRecord } from "../store/types.ts";
-import { claimBody, createJobBody, loginBody, parseBody, payBody, registerBody } from "./schemas.ts";
+import { claimBody, createJobBody, loginBody, offerBody, parseBody, payBody, registerBody } from "./schemas.ts";
 
 interface Services {
   jobs: JobService;
@@ -65,6 +65,19 @@ export function apiRoutes({ jobs, auth }: Services): Router {
 
   router.get("/jobs/:id", async (req, res) => {
     res.json(await jobs.getJob(currentUser(res), req.params.id));
+  });
+
+  router.post("/jobs/:id/offer", async (req, res) => {
+    const { amountKobo } = parseBody(offerBody, req.body);
+    res.json(await jobs.offerPrice(currentUser(res), req.params.id, amountKobo));
+  });
+
+  router.post("/jobs/:id/offer/accept", async (req, res) => {
+    res.json(await jobs.acceptOffer(currentUser(res), req.params.id));
+  });
+
+  router.post("/jobs/:id/offer/decline", async (req, res) => {
+    res.json(await jobs.declineOffer(currentUser(res), req.params.id));
   });
 
   router.post("/jobs/:id/quote", async (req, res) => {

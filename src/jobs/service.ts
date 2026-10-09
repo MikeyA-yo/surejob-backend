@@ -163,15 +163,7 @@ export class JobService {
     }
     const title = input.title.trim();
     if (title === "") throw new DomainError("VALIDATION_ERROR", "title must not be empty");
-    if (!Number.isSafeInteger(input.amountKobo) || input.amountKobo <= 0) {
-      throw new DomainError("VALIDATION_ERROR", "amountKobo must be a positive whole number of kobo");
-    }
-    if (input.amountKobo > this.#maxAmountKobo) {
-      throw new DomainError(
-        "VALIDATION_ERROR",
-        `amountKobo must not exceed ${this.#maxAmountKobo} (${formatNaira(this.#maxAmountKobo)})`,
-      );
-    }
+    this.#validateAmount(input.amountKobo);
     let worker: UserRecord;
     if (input.newWorker) {
       worker = {
@@ -213,6 +205,7 @@ export class JobService {
       const job = await this.#requireJob(jobId);
       requireCustomerOf(job, actor);
       nextStatus(job.status, "quote");
+      requireNoPendingOffer(job);
       const worker = await this.#requireUser(job.workerId);
 
       const quote = await this.#callAdapter(job, "insurance", "quote", (insurance) =>
@@ -251,6 +244,7 @@ export class JobService {
       if (job.status !== "BOOKED" && job.status !== "ESCROWED") {
         throw new DomainError("INVALID_TRANSITION", `cannot pay for a job that is ${job.status}`);
       }
+      requireNoPendingOffer(job);
       const premiumKobo = requireMatchingQuote(job, quoteId);
 
       if (job.status === "BOOKED") {
@@ -276,6 +270,90 @@ export class JobService {
       });
 
       return this.#view(job, "customer");
+    });
+  }
+
+  /**
+   * Proposes a new price (or counters the other side's offer) on a BOOKED job with a registered
+   * worker. The price only changes when the other side accepts.
+   */
+  async offerPrice(actor: UserRecord, jobId: string, amountKobo: number): Promise<JobView> {
+    return this.#locks.run(jobId, async () => {
+      const job = await this.#requireJob(jobId);
+      const party = sideOf(job, actor);
+      await this.#requireNegotiable(job);
+      this.#validateAmount(amountKobo);
+      if (amountKobo === job.amountKobo) {
+        throw new DomainError("VALIDATION_ERROR", `the price is already ${formatNaira(amountKobo)}`);
+      }
+
+      const isCounter = job.pendingOffer !== null && job.pendingOffer.by !== party;
+      const verb = isCounter ? "countered with" : "proposed";
+      const updated = await this.#store.updateJob(job.id, {
+        expectStatus: "BOOKED",
+        set: { pendingOffer: { by: party, amountKobo, at: this.#timestamp() } },
+        events: [
+          this.#event({
+            type: isCounter ? "price.countered" : "price.offered",
+            detail: `${capitalize(party)} ${verb} ${formatNaira(amountKobo)} (was ${formatNaira(job.amountKobo)})`,
+          }),
+        ],
+      });
+      if (!updated) throw await this.#staleJob(job.id);
+      this.#log.info("price offer", { jobId, by: party, amountKobo });
+      return this.#view(updated, party);
+    });
+  }
+
+  /** The side that did not make the open offer accepts it; it becomes the job's price. */
+  async acceptOffer(actor: UserRecord, jobId: string): Promise<JobView> {
+    return this.#locks.run(jobId, async () => {
+      const job = await this.#requireJob(jobId);
+      const party = sideOf(job, actor);
+      await this.#requireNegotiable(job);
+      const offer = job.pendingOffer;
+      if (!offer) throw new DomainError("INVALID_TRANSITION", "there is no price offer to accept");
+      if (offer.by === party) throw new DomainError("FORBIDDEN", "you can't accept your own offer");
+
+      const updated = await this.#store.updateJob(job.id, {
+        expectStatus: "BOOKED",
+        // A quote priced the old amount; the customer re-quotes before paying.
+        set: { amountKobo: offer.amountKobo, pendingOffer: null, quoteId: null, premiumKobo: null },
+        events: [
+          this.#event({
+            type: "price.agreed",
+            detail: `${capitalize(party)} accepted ${formatNaira(offer.amountKobo)}; the job price is now ${formatNaira(offer.amountKobo)}`,
+          }),
+        ],
+      });
+      if (!updated) throw await this.#staleJob(job.id);
+      this.#log.info("price agreed", { jobId, amountKobo: offer.amountKobo });
+      return this.#view(updated, party);
+    });
+  }
+
+  /** Declines the other side's offer, or withdraws your own. The price stays as it was. */
+  async declineOffer(actor: UserRecord, jobId: string): Promise<JobView> {
+    return this.#locks.run(jobId, async () => {
+      const job = await this.#requireJob(jobId);
+      const party = sideOf(job, actor);
+      await this.#requireNegotiable(job);
+      const offer = job.pendingOffer;
+      if (!offer) throw new DomainError("INVALID_TRANSITION", "there is no price offer to decline");
+
+      const withdrawn = offer.by === party;
+      const updated = await this.#store.updateJob(job.id, {
+        expectStatus: "BOOKED",
+        set: { pendingOffer: null },
+        events: [
+          this.#event({
+            type: withdrawn ? "price.withdrawn" : "price.declined",
+            detail: `${capitalize(party)} ${withdrawn ? "withdrew" : "declined"} the ${formatNaira(offer.amountKobo)} offer; the price stays ${formatNaira(job.amountKobo)}`,
+          }),
+        ],
+      });
+      if (!updated) throw await this.#staleJob(job.id);
+      return this.#view(updated, party);
     });
   }
 
@@ -392,6 +470,7 @@ export class JobService {
       payoutExpiresAt: null,
       customerConfirmedAt: null,
       workerConfirmedAt: null,
+      pendingOffer: null,
       modes: this.modes(),
       createdAt,
       claim: null,
@@ -496,12 +575,44 @@ export class JobService {
     return user;
   }
 
+  /** Prices can be negotiated before payment, and only with a worker who has an account. */
+  async #requireNegotiable(job: JobRecord): Promise<void> {
+    if (job.status !== "BOOKED") {
+      throw new DomainError("INVALID_TRANSITION", `the price can only be negotiated before payment; the job is ${job.status}`);
+    }
+    if (!isOnPlatform(await this.#requireUser(job.workerId))) {
+      throw new DomainError("FORBIDDEN", "price negotiation needs a worker with a SureJob account");
+    }
+  }
+
+  #validateAmount(amountKobo: number): void {
+    if (!Number.isSafeInteger(amountKobo) || amountKobo <= 0) {
+      throw new DomainError("VALIDATION_ERROR", "amountKobo must be a positive whole number of kobo");
+    }
+    if (amountKobo > this.#maxAmountKobo) {
+      throw new DomainError(
+        "VALIDATION_ERROR",
+        `amountKobo must not exceed ${this.#maxAmountKobo} (${formatNaira(this.#maxAmountKobo)})`,
+      );
+    }
+  }
+
   #event(input: EventInput): EventRecord {
     return { type: input.type, at: this.#timestamp(), detail: input.detail };
   }
 
   #timestamp(): string {
     return this.#now().toISOString();
+  }
+}
+
+function requireNoPendingOffer(job: JobRecord): void {
+  if (job.pendingOffer) {
+    const who = job.pendingOffer.by === "worker" ? "The worker" : "The customer";
+    throw new DomainError(
+      "OFFER_PENDING",
+      `${who} proposed ${formatNaira(job.pendingOffer.amountKobo)}; accept or decline it before paying`,
+    );
   }
 }
 

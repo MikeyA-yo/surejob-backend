@@ -8,6 +8,8 @@ import {
   type JobPatch,
   type JobRecord,
   type JobUpdate,
+  type Party,
+  type PriceOffer,
   type Store,
   type UserRecord,
 } from "./types.ts";
@@ -38,6 +40,9 @@ interface JobRow {
   payout_expires_at: string | null;
   customer_confirmed_at: string | null;
   worker_confirmed_at: string | null;
+  offer_by: Party | null;
+  offer_amount_kobo: number | null;
+  offer_at: string | null;
   modes_json: string;
   created_at: string;
 }
@@ -58,8 +63,9 @@ interface EventRow {
   created_at: string;
 }
 
-/** JobPatch field → jobs column. Anything not listed cannot be updated. */
-const PATCH_COLUMNS: Record<keyof JobPatch, string> = {
+/** Scalar JobPatch field → jobs column. `modes` and `pendingOffer` are mapped in patchColumns. */
+const PATCH_COLUMNS: Record<Exclude<keyof JobPatch, "modes" | "pendingOffer">, string> = {
+  amountKobo: "amount_kobo",
   premiumKobo: "premium_kobo",
   status: "status",
   quoteId: "quote_id",
@@ -70,8 +76,24 @@ const PATCH_COLUMNS: Record<keyof JobPatch, string> = {
   payoutExpiresAt: "payout_expires_at",
   customerConfirmedAt: "customer_confirmed_at",
   workerConfirmedAt: "worker_confirmed_at",
-  modes: "modes_json",
 };
+
+/** Turns a JobPatch into [column, value] pairs for UPDATE. */
+function patchColumns(patch: JobPatch): [string, SQLInputValue][] {
+  const columns: [string, SQLInputValue][] = [];
+  for (const [field, value] of Object.entries(patch) as [keyof JobPatch, unknown][]) {
+    if (value === undefined) continue;
+    if (field === "modes") {
+      columns.push(["modes_json", JSON.stringify(value)]);
+    } else if (field === "pendingOffer") {
+      const offer = value as PriceOffer | null;
+      columns.push(["offer_by", offer?.by ?? null], ["offer_amount_kobo", offer?.amountKobo ?? null], ["offer_at", offer?.at ?? null]);
+    } else {
+      columns.push([PATCH_COLUMNS[field], value as SQLInputValue]);
+    }
+  }
+  return columns;
+}
 
 /**
  * SQLite store (node:sqlite). Used when MONGO_URI is not set: local runs, offline demo, tests.
@@ -114,10 +136,10 @@ export class SqliteStore implements Store {
       insertJob: db.prepare(`
         INSERT INTO jobs (id, customer_id, worker_id, title, amount_kobo, premium_kobo, status, quote_id, escrow_ref,
           policy_ref, payout_code, payout_ref, payout_expires_at, customer_confirmed_at, worker_confirmed_at,
-          modes_json, created_at)
+          offer_by, offer_amount_kobo, offer_at, modes_json, created_at)
         VALUES (:id, :customer_id, :worker_id, :title, :amount_kobo, :premium_kobo, :status, :quote_id, :escrow_ref,
           :policy_ref, :payout_code, :payout_ref, :payout_expires_at, :customer_confirmed_at, :worker_confirmed_at,
-          :modes_json, :created_at)
+          :offer_by, :offer_amount_kobo, :offer_at, :modes_json, :created_at)
       `),
       getClaim: db.prepare("SELECT * FROM claims WHERE job_id = ?"),
       insertClaim: db.prepare(`
@@ -169,11 +191,10 @@ export class SqliteStore implements Store {
       const row = this.#stmt.getJob.get(id) as JobRow | undefined;
       if (!row || row.status !== update.expectStatus) return null;
 
-      const entries = (Object.entries(update.set) as [keyof JobPatch, unknown][]).filter(([, v]) => v !== undefined);
-      if (entries.length > 0) {
-        const assignments = entries.map(([field]) => `${PATCH_COLUMNS[field]} = ?`).join(", ");
-        const values = entries.map(([field, v]) => (field === "modes" ? JSON.stringify(v) : (v as SQLInputValue)));
-        this.#db.prepare(`UPDATE jobs SET ${assignments} WHERE id = ?`).run(...values, id);
+      const columns = patchColumns(update.set);
+      if (columns.length > 0) {
+        const assignments = columns.map(([column]) => `${column} = ?`).join(", ");
+        this.#db.prepare(`UPDATE jobs SET ${assignments} WHERE id = ?`).run(...columns.map(([, value]) => value), id);
       }
       if (update.claim) this.#insertClaim(id, update.claim);
       this.#insertEvents(id, update.events);
@@ -239,6 +260,10 @@ export class SqliteStore implements Store {
       payoutExpiresAt: row.payout_expires_at,
       customerConfirmedAt: row.customer_confirmed_at,
       workerConfirmedAt: row.worker_confirmed_at,
+      pendingOffer:
+        row.offer_by !== null && row.offer_amount_kobo !== null && row.offer_at !== null
+          ? { by: row.offer_by, amountKobo: row.offer_amount_kobo, at: row.offer_at }
+          : null,
       modes: JSON.parse(row.modes_json) as Modes,
       createdAt: row.created_at,
       claim: claim
@@ -273,6 +298,9 @@ export class SqliteStore implements Store {
       payout_expires_at: job.payoutExpiresAt,
       customer_confirmed_at: job.customerConfirmedAt,
       worker_confirmed_at: job.workerConfirmedAt,
+      offer_by: job.pendingOffer?.by ?? null,
+      offer_amount_kobo: job.pendingOffer?.amountKobo ?? null,
+      offer_at: job.pendingOffer?.at ?? null,
       modes_json: JSON.stringify(job.modes),
       created_at: job.createdAt,
     });

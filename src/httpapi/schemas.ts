@@ -60,6 +60,16 @@ export const createJobBody = z
   })
   .meta({ id: "CreateJobRequest", description: "The customer is the logged-in user. Give workerId or newWorker, not both." });
 
+export const offerBody = z
+  .object({
+    amountKobo: z
+      .number()
+      .int("must be a whole number of kobo")
+      .positive()
+      .meta({ description: "Proposed job price in kobo.", example: 1_800_000 }),
+  })
+  .meta({ id: "OfferRequest" });
+
 export const payBody = z
   .object({
     quoteId: z.string().trim().min(1).meta({ description: "The quoteId from the latest /quote call.", example: "QTE-7KQ2M9XA" }),

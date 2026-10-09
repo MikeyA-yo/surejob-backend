@@ -4,6 +4,7 @@
 #   scripts/demo.sh             Tunde books Emeka → quote → pay → both confirm → Emeka sees the payout code
 #   scripts/demo.sh claim       book → quote → pay → Tunde files a claim
 #   scripts/demo.sh offplatform Tunde books Musa, who is not on SureJob → pay → Tunde's confirmation pays out
+#   scripts/demo.sh bargain     Emeka asks for more, Tunde counters, Emeka accepts → then the happy path at the agreed price
 #
 # Env: BASE_URL (default http://127.0.0.1:8080). Needs curl and node (no jq).
 set -euo pipefail
@@ -13,8 +14,8 @@ SCENARIO="${1:-happy}"
 DEMO_PASSWORD="password123"
 
 case "$SCENARIO" in
-  happy | claim | offplatform) ;;
-  *) echo "usage: $0 [happy|claim|offplatform]" >&2; exit 2 ;;
+  happy | claim | offplatform | bargain) ;;
+  *) echo "usage: $0 [happy|claim|offplatform|bargain]" >&2; exit 2 ;;
 esac
 
 # fields <json> <path>... — prints the value at each dotted path ("payout.code"), one per line.
@@ -91,6 +92,17 @@ expect BOOKED "${f[0]}"
 JOB_ID="${f[1]}"
 echo "   $JOB_ID  ${f[2]}  ${f[3]}  worker ${f[4]} (on SureJob: ${f[5]})  [BOOKED]"
 
+if [[ "$SCENARIO" == "bargain" ]]; then
+  step "1b. Bargain over the price"
+  mapfile -t f < <(fields "$(api "$EMEKA" POST "/api/jobs/$JOB_ID/offer" '{"amountKobo":1800000}')" ₦pendingOffer.amountKobo)
+  echo "   Emeka asks for ${f[0]}"
+  mapfile -t f < <(fields "$(api "$TUNDE" POST "/api/jobs/$JOB_ID/offer" '{"amountKobo":1650000}')" ₦pendingOffer.amountKobo)
+  echo "   Tunde counters with ${f[0]}"
+  mapfile -t f < <(fields "$(api "$EMEKA" POST "/api/jobs/$JOB_ID/offer/accept")" ₦amountKobo pendingOffer)
+  [[ -z "${f[1]}" ]] || { echo "✗ offer still open after accept" >&2; exit 1; }
+  echo "   Emeka accepts: the job price is now ${f[0]}"
+fi
+
 step "2. Get a cover quote"
 mapfile -t f < <(fields "$(api "$TUNDE" POST "/api/jobs/$JOB_ID/quote")" quoteId ₦premiumKobo ₦totalKobo coverage)
 QUOTE_ID="${f[0]}"
@@ -117,7 +129,7 @@ case "$SCENARIO" in
     expect PAID_OUT "${f[0]}"
     echo "   [PAID_OUT]  Tunde passes the code to Musa"
     ;;
-  happy)
+  happy | bargain)
     step "4. Tunde confirms"
     mapfile -t f < <(fields "$(api "$TUNDE" POST "/api/jobs/$JOB_ID/confirm")" status)
     expect INSURED "${f[0]}"

@@ -139,6 +139,85 @@ describe("workers not on SureJob", () => {
   });
 });
 
+describe("price negotiation", () => {
+  it("worker counters, customer counters, worker accepts; payment uses the agreed price", async () => {
+    api = await startTestServer();
+    const id = api.seedJobId; // Brake repair at ₦15,000 with Emeka
+    const quoteBefore = await api.request("POST", `/api/jobs/${id}/quote`);
+
+    const offer = await api.asWorker<JobView>("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_800_000 });
+    assert.equal(offer.status, 200);
+    assert.deepEqual({ ...offer.body.pendingOffer, at: "x" }, { by: "worker", amountKobo: 1_800_000, at: "x" });
+    assert.equal(offer.body.amountKobo, 1_500_000, "price unchanged until accepted");
+
+    const blocked = await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: quoteBefore.body.quoteId });
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.body.error.code, "OFFER_PENDING");
+    assert.equal((await api.request("POST", `/api/jobs/${id}/quote`)).body.error.code, "OFFER_PENDING");
+    assert.equal((await api.asWorker("POST", `/api/jobs/${id}/offer/accept`)).body.error.code, "FORBIDDEN", "not your own offer");
+
+    const counter = await api.request<JobView>("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_650_000 });
+    assert.equal(counter.body.pendingOffer?.by, "customer");
+    const agreed = await api.asWorker<JobView>("POST", `/api/jobs/${id}/offer/accept`);
+    assert.equal(agreed.status, 200);
+    assert.equal(agreed.body.amountKobo, 1_650_000);
+    assert.equal(agreed.body.pendingOffer, null);
+    assert.equal(agreed.body.quoteId, null, "the old quote priced ₦15,000");
+
+    const stale = await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: quoteBefore.body.quoteId });
+    assert.equal(stale.body.error.code, "QUOTE_REQUIRED");
+    const quote = await api.request("POST", `/api/jobs/${id}/quote`);
+    assert.equal(quote.body.totalKobo, 1_650_000 + quote.body.premiumKobo);
+    const paid = await api.request<JobView>("POST", `/api/jobs/${id}/pay`, { quoteId: quote.body.quoteId });
+    assert.equal(paid.body.status, "INSURED");
+    assert.match(paid.body.events.find((e) => e.type === "payment.escrowed")!.detail, /^₦16,850.00 held/); // ₦16,500 + ₦350 cover
+    assert.deepEqual(
+      eventTypes(paid.body).filter((t) => t.startsWith("price.")),
+      ["price.offered", "price.countered", "price.agreed"],
+    );
+
+    const late = await api.asWorker("POST", `/api/jobs/${id}/offer`, { amountKobo: 2_000_000 });
+    assert.equal(late.status, 409, "no bargaining after payment");
+    assert.equal(late.body.error.code, "INVALID_TRANSITION");
+  });
+
+  it("declining or withdrawing keeps the price and unblocks payment", async () => {
+    api = await startTestServer();
+    const id = api.seedJobId;
+
+    await api.request("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_200_000 });
+    const declined = await api.asWorker<JobView>("POST", `/api/jobs/${id}/offer/decline`);
+    assert.equal(declined.body.pendingOffer, null);
+    assert.equal(declined.body.amountKobo, 1_500_000);
+    assert.equal(eventTypes(declined.body).at(-1), "price.declined");
+
+    await api.request("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_300_000 });
+    const withdrawn = await api.request<JobView>("POST", `/api/jobs/${id}/offer/decline`);
+    assert.equal(eventTypes(withdrawn.body).at(-1), "price.withdrawn");
+
+    const quote = await api.request("POST", `/api/jobs/${id}/quote`);
+    assert.equal((await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: quote.body.quoteId })).status, 200);
+  });
+
+  it("rejects bad offers, offers with no answerable offer, and off-platform workers", async () => {
+    api = await startTestServer();
+    const id = api.seedJobId;
+
+    for (const amountKobo of [0, -5, 12.5, 50_000_001, 1_500_000]) {
+      const res = await api.request("POST", `/api/jobs/${id}/offer`, { amountKobo });
+      assert.equal(res.status, 400, String(amountKobo));
+      assert.equal(res.body.error.code, "VALIDATION_ERROR");
+    }
+    assert.equal((await api.request("POST", `/api/jobs/${id}/offer/accept`)).body.error.code, "INVALID_TRANSITION");
+    assert.equal((await api.request("POST", `/api/jobs/${id}/offer/decline`)).body.error.code, "INVALID_TRANSITION");
+
+    const { body: guestJob } = await api.request<JobView>("POST", "/api/jobs", NEW_WORKER_BOOKING);
+    const guest = await api.request("POST", `/api/jobs/${guestJob.id}/offer`, { amountKobo: 700_000 });
+    assert.equal(guest.status, 403);
+    assert.match(guest.body.error.message, /SureJob account/);
+  });
+});
+
 describe("auth", () => {
   it("registers, logs in and identifies the user", async () => {
     api = await startTestServer();
@@ -419,6 +498,9 @@ describe("API docs", () => {
       "POST /api/jobs",
       "POST /api/jobs/{id}/claim",
       "POST /api/jobs/{id}/confirm",
+      "POST /api/jobs/{id}/offer",
+      "POST /api/jobs/{id}/offer/accept",
+      "POST /api/jobs/{id}/offer/decline",
       "POST /api/jobs/{id}/pay",
       "POST /api/jobs/{id}/quote",
     ]);
