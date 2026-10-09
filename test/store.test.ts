@@ -29,6 +29,8 @@ function job(overrides: Partial<JobRecord> = {}): JobRecord {
     title: "Brake repair",
     amountKobo: 1_500_000,
     premiumKobo: null,
+    feeKobo: null,
+    agreedAmountKobo: null,
     status: "BOOKED",
     quoteId: null,
     escrowRef: null,
@@ -105,6 +107,8 @@ function storeContract(name: string, open: () => Promise<{ store: Store; cleanup
     it("insertJob round-trips every field", async () => {
       const full = job({
         premiumKobo: 30_000,
+        feeKobo: 37_500,
+        agreedAmountKobo: 1_500_000,
         status: "INSURED",
         quoteId: "QTE-1",
         escrowRef: "ESC-1",

@@ -68,8 +68,15 @@ const job = z
     title: z.string().meta({ example: "Brake repair" }),
     status: jobStatus,
     amountKobo: z.number().int().meta({ example: 1_500_000 }),
-    premiumKobo: z.number().int().nullable().meta({ description: "null until quoted.", example: 30_000 }),
-    totalKobo: z.number().int().meta({ description: "amountKobo + premiumKobo (premium counts as 0 until quoted).", example: 1_530_000 }),
+    premiumKobo: z.number().int().nullable().meta({ description: "Insurance premium; null until quoted.", example: 30_000 }),
+    feeKobo: z.number().int().nullable().meta({ description: "SureJob service fee; null until quoted.", example: 37_500 }),
+    totalKobo: z
+      .number()
+      .int()
+      .meta({ description: "amountKobo + premiumKobo + feeKobo (unquoted parts count as 0).", example: 1_567_500 }),
+    priceAgreed: z.boolean().meta({
+      description: "The worker has agreed to amountKobo. Required before quote and pay; always true for off-platform workers.",
+    }),
     quoteId: z.string().nullable().meta({ description: "Latest quote; pass it to /pay.", example: "QTE-7KQ2M9XA" }),
     pendingOffer: z
       .object({
@@ -122,8 +129,12 @@ const job = z
 const quote = z
   .object({
     quoteId: z.string().meta({ example: "QTE-7KQ2M9XA" }),
-    premiumKobo: z.number().int().meta({ example: 30_000 }),
-    totalKobo: z.number().int().meta({ description: "Job amount + premium: what the customer pays.", example: 1_530_000 }),
+    premiumKobo: z.number().int().meta({ description: "Insurance cover.", example: 30_000 }),
+    feeKobo: z.number().int().meta({ description: "SureJob service fee.", example: 37_500 }),
+    totalKobo: z
+      .number()
+      .int()
+      .meta({ description: "Job amount + premium + fee: what the customer pays into escrow.", example: 1_567_500 }),
     coverage: z.array(z.string()).meta({
       description: "Plain-language lines, shown as-is.",
       example: ["Damage to your property during the mechanic job, up to the job value", "Injury to the worker while on the job"],
@@ -314,6 +325,23 @@ const paths = {
       },
     },
   },
+  "/api/jobs/{id}/agree": {
+    post: {
+      tags: ["Negotiation"],
+      summary: "Worker accepts the current price",
+      description:
+        "The worker agrees to the job at its current price. A registered worker must agree (here, or by accepting or " +
+        "making an offer that is accepted) before the customer can quote and pay. Repeating it is a no-op.",
+      parameters: [jobIdParam],
+      responses: {
+        200: ok("The job with priceAgreed true.", "Job"),
+        401: unauthorized,
+        403: fail("FORBIDDEN: only the job's worker can do this, or the worker has no account."),
+        404: notFound,
+        409: fail("OFFER_PENDING: answer the open offer instead. INVALID_TRANSITION: the job is already paid for."),
+      },
+    },
+  },
   "/api/jobs/{id}/offer/decline": {
     post: {
       tags: ["Negotiation"],
@@ -332,16 +360,20 @@ const paths = {
   "/api/jobs/{id}/quote": {
     post: {
       tags: ["Lifecycle"],
-      summary: "Quote job cover",
+      summary: "Quote job cover and fees",
       description:
-        "The job's customer gets an insurance quote for a BOOKED job. Status stays BOOKED. Quoting again replaces the previous quote.",
+        "The job's customer gets the insurance premium and SureJob service fee for a BOOKED job whose price the worker has " +
+        "agreed to. Status stays BOOKED. Quoting again replaces the previous quote.",
       parameters: [jobIdParam],
       responses: {
         200: ok("The quote.", "Quote"),
         401: unauthorized,
         403: forbiddenJob,
         404: notFound,
-        409: fail("INVALID_TRANSITION: the job is not BOOKED. OFFER_PENDING: answer the open price offer first."),
+        409: fail(
+          "INVALID_TRANSITION: the job is not BOOKED. OFFER_PENDING: answer the open price offer first. " +
+            "PRICE_NOT_AGREED: the worker has not accepted the price yet.",
+        ),
         502: adapterFailed,
       },
     },
@@ -364,7 +396,8 @@ const paths = {
         404: notFound,
         409: fail(
           "QUOTE_REQUIRED: no quote yet (or the price changed since). QUOTE_MISMATCH: quoteId is not the latest quote. " +
-            "OFFER_PENDING: answer the open price offer first. INVALID_TRANSITION: the job is past payment.",
+            "OFFER_PENDING: answer the open price offer first. PRICE_NOT_AGREED: the worker has not accepted the price. " +
+            "INVALID_TRANSITION: the job is past payment.",
         ),
         502: adapterFailed,
       },

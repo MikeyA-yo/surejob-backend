@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SureJob walkthrough against a running API, logged in as the demo accounts.
 #
-#   scripts/demo.sh             Tunde books Emeka → quote → pay → both confirm → Emeka sees the payout code
+#   scripts/demo.sh             Tunde books Emeka → Emeka accepts the price → quote → pay → both confirm → Emeka sees the code
 #   scripts/demo.sh claim       book → quote → pay → Tunde files a claim
 #   scripts/demo.sh offplatform Tunde books Musa, who is not on SureJob → pay → Tunde's confirmation pays out
 #   scripts/demo.sh bargain     Emeka asks for more, Tunde counters, Emeka accepts → then the happy path at the agreed price
@@ -92,6 +92,13 @@ expect BOOKED "${f[0]}"
 JOB_ID="${f[1]}"
 echo "   $JOB_ID  ${f[2]}  ${f[3]}  worker ${f[4]} (on SureJob: ${f[5]})  [BOOKED]"
 
+if [[ "$SCENARIO" == "happy" || "$SCENARIO" == "claim" ]]; then
+  step "1b. Emeka accepts the price"
+  mapfile -t f < <(fields "$(api "$EMEKA" POST "/api/jobs/$JOB_ID/agree")" priceAgreed ₦amountKobo)
+  expect true "${f[0]}"
+  echo "   agreed at ${f[1]}"
+fi
+
 if [[ "$SCENARIO" == "bargain" ]]; then
   step "1b. Bargain over the price"
   mapfile -t f < <(fields "$(api "$EMEKA" POST "/api/jobs/$JOB_ID/offer" '{"amountKobo":1800000}')" ₦pendingOffer.amountKobo)
@@ -103,11 +110,11 @@ if [[ "$SCENARIO" == "bargain" ]]; then
   echo "   Emeka accepts: the job price is now ${f[0]}"
 fi
 
-step "2. Get a cover quote"
-mapfile -t f < <(fields "$(api "$TUNDE" POST "/api/jobs/$JOB_ID/quote")" quoteId ₦premiumKobo ₦totalKobo coverage)
+step "2. Get a quote: cover and fees"
+mapfile -t f < <(fields "$(api "$TUNDE" POST "/api/jobs/$JOB_ID/quote")" quoteId ₦premiumKobo ₦feeKobo ₦totalKobo coverage)
 QUOTE_ID="${f[0]}"
-echo "   $QUOTE_ID  premium ${f[1]}  total ${f[2]}"
-node -e 'for (const line of JSON.parse(process.argv[1])) console.log("   • " + line)' "${f[3]}"
+echo "   $QUOTE_ID  insurance cover ${f[1]}  SureJob fee ${f[2]}  total ${f[3]}"
+node -e 'for (const line of JSON.parse(process.argv[1])) console.log("   • " + line)' "${f[4]}"
 
 step "3. Pay into escrow (collect, then issue policy)"
 mapfile -t f < <(fields "$(api "$TUNDE" POST "/api/jobs/$JOB_ID/pay" "{\"quoteId\":\"$QUOTE_ID\"}")" status escrowRef policyRef)

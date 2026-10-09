@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 import { Card, ErrorNote, Field, PrimaryButton } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { createJob, errorMessage, listWorkers, type CreateJobParams, type WorkerSummary } from "@/api";
+import { jobHref } from "@/lib/jobStatus";
 
 /** Value of the "worker not on SureJob" choice in the worker picker. */
 const NEW_WORKER = "__new__";
@@ -61,7 +62,8 @@ export default function BookScreen() {
     setBusy(true);
     try {
       const job = await createJob(params);
-      router.push(`/job/${job.id}/pay`);
+      // A registered worker accepts the price first; someone not on SureJob can be paid straight away.
+      router.push(jobHref(job));
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);

@@ -136,7 +136,12 @@ function fromDoc<T extends { _id: string }>(doc: T): Omit<T, "_id"> & { id: stri
 /** Jobs written before a field existed lack it; fill the defaults. */
 function jobFromDoc(doc: JobDoc): JobRecord {
   const job = fromDoc(doc);
-  return { ...job, pendingOffer: job.pendingOffer ?? null };
+  return {
+    ...job,
+    pendingOffer: job.pendingOffer ?? null,
+    feeKobo: job.feeKobo ?? null,
+    agreedAmountKobo: job.agreedAmountKobo ?? null,
+  };
 }
 
 function withoutUndefined<T extends object>(obj: T): Partial<T> {

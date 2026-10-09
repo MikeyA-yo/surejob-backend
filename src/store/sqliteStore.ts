@@ -31,6 +31,8 @@ interface JobRow {
   title: string;
   amount_kobo: number;
   premium_kobo: number | null;
+  fee_kobo: number | null;
+  agreed_amount_kobo: number | null;
   status: JobRecord["status"];
   quote_id: string | null;
   escrow_ref: string | null;
@@ -67,6 +69,8 @@ interface EventRow {
 const PATCH_COLUMNS: Record<Exclude<keyof JobPatch, "modes" | "pendingOffer">, string> = {
   amountKobo: "amount_kobo",
   premiumKobo: "premium_kobo",
+  feeKobo: "fee_kobo",
+  agreedAmountKobo: "agreed_amount_kobo",
   status: "status",
   quoteId: "quote_id",
   escrowRef: "escrow_ref",
@@ -134,10 +138,10 @@ export class SqliteStore implements Store {
       ),
       getJob: db.prepare("SELECT * FROM jobs WHERE id = ?"),
       insertJob: db.prepare(`
-        INSERT INTO jobs (id, customer_id, worker_id, title, amount_kobo, premium_kobo, status, quote_id, escrow_ref,
+        INSERT INTO jobs (id, customer_id, worker_id, title, amount_kobo, premium_kobo, fee_kobo, agreed_amount_kobo, status, quote_id, escrow_ref,
           policy_ref, payout_code, payout_ref, payout_expires_at, customer_confirmed_at, worker_confirmed_at,
           offer_by, offer_amount_kobo, offer_at, modes_json, created_at)
-        VALUES (:id, :customer_id, :worker_id, :title, :amount_kobo, :premium_kobo, :status, :quote_id, :escrow_ref,
+        VALUES (:id, :customer_id, :worker_id, :title, :amount_kobo, :premium_kobo, :fee_kobo, :agreed_amount_kobo, :status, :quote_id, :escrow_ref,
           :policy_ref, :payout_code, :payout_ref, :payout_expires_at, :customer_confirmed_at, :worker_confirmed_at,
           :offer_by, :offer_amount_kobo, :offer_at, :modes_json, :created_at)
       `),
@@ -251,6 +255,8 @@ export class SqliteStore implements Store {
       title: row.title,
       amountKobo: row.amount_kobo,
       premiumKobo: row.premium_kobo,
+      feeKobo: row.fee_kobo,
+      agreedAmountKobo: row.agreed_amount_kobo,
       status: row.status,
       quoteId: row.quote_id,
       escrowRef: row.escrow_ref,
@@ -289,6 +295,8 @@ export class SqliteStore implements Store {
       title: job.title,
       amount_kobo: job.amountKobo,
       premium_kobo: job.premiumKobo,
+      fee_kobo: job.feeKobo,
+      agreed_amount_kobo: job.agreedAmountKobo,
       status: job.status,
       quote_id: job.quoteId,
       escrow_ref: job.escrowRef,

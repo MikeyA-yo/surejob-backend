@@ -16,7 +16,7 @@ status-conditional write.
 npm install
 npm run dev          # watch mode, http://127.0.0.1:8080
 npm start            # same without watch
-npm run demo         # in another terminal: book → quote → pay → confirm ×2 → payout code
+npm run demo         # in another terminal: book → worker accepts price → quote → pay → confirm ×2 → payout code
 npm run demo:claim   # book → quote → pay → claim
 bash scripts/demo.sh offplatform  # book a worker who is not on SureJob; the customer's confirmation pays out
 bash scripts/demo.sh bargain      # Emeka asks for more, Tunde counters, Emeka accepts, then pay and confirm
@@ -45,11 +45,17 @@ token to decide who is acting: only the job's customer can quote and pay, each s
 and the payout code is only returned to the worker. `/api/config`, `/api/demo/reset`, `/healthz` and
 `/docs` stay public.
 
-**Price negotiation:** while a job is BOOKED and the worker has an account, either side can propose a
-price (`POST /api/jobs/:id/offer`), and the other side accepts (`/offer/accept`), declines
-(`/offer/decline`, which also withdraws your own) or counters with a new offer. The price changes only
-on accept; any earlier quote is discarded so payment always matches the agreed price. Quote and pay
-return `409 OFFER_PENDING` while an offer is open. `bash scripts/demo.sh bargain` runs it end to end.
+**Price agreement and negotiation:** a registered worker must agree to the price before the customer
+can quote or pay (`409 PRICE_NOT_AGREED` until then). The worker accepts the booked price with
+`POST /api/jobs/:id/agree`, or either side bargains: propose (`/offer`), and the other side accepts
+(`/offer/accept`), declines (`/offer/decline`, which also withdraws your own) or counters. Accepting an
+offer sets the price and counts as the worker's agreement; any earlier quote is discarded. Quote and pay
+return `409 OFFER_PENDING` while an offer is open. Workers not on SureJob need no agreement.
+`bash scripts/demo.sh bargain` runs it end to end.
+
+**Fees:** the quote itemizes the insurance premium and a SureJob service fee (`PLATFORM_FEE_PERCENT`,
+default 2.5% of the job price, rounded up to whole naira, minimum `PLATFORM_FEE_MIN_KOBO` = ₦100). The
+customer pays job price + premium + fee into escrow; the worker's payout is the job price.
 
 **Workers not on SureJob:** a customer can book someone without an account by sending
 `newWorker: { name, phone, trade? }` instead of `workerId`. That worker can't log in, so the customer's
@@ -84,7 +90,7 @@ in mock mode but may be `null` with live XpressCash, whose documented response h
 | --- | --- |
 | 400 | `VALIDATION_ERROR`, `INVALID_JSON` |
 | 404 | `NOT_FOUND` |
-| 409 | `INVALID_TRANSITION`, `QUOTE_REQUIRED`, `QUOTE_MISMATCH`, `OFFER_PENDING`, `EMAIL_TAKEN` |
+| 409 | `INVALID_TRANSITION`, `QUOTE_REQUIRED`, `QUOTE_MISMATCH`, `OFFER_PENDING`, `PRICE_NOT_AGREED`, `EMAIL_TAKEN` |
 | 502 | `ADAPTER_ERROR` (provider call failed; the job stays where it was, so retry the same request) |
 
 No auth in the POC. Do not describe it as secure.

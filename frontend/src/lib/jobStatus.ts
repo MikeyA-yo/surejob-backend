@@ -10,9 +10,14 @@ export const STATUS_LABELS: Record<Job["status"], string> = {
   CLAIM_FILED: "Claim filed · payout held",
 };
 
-/** The next screen for this viewer: pay for a booked job (unless a price offer needs an answer), otherwise the status screen. */
+/** The customer can pay once the worker has accepted the price and no offer is open. */
+export function readyToPay(job: Job): boolean {
+  return job.status === "BOOKED" && job.priceAgreed && !job.pendingOffer;
+}
+
+/** The next screen for this viewer: payment when the customer can pay, otherwise the job screen. */
 export function jobHref(job: Job): string {
-  return job.status === "BOOKED" && job.you === "customer" && !job.pendingOffer ? `/job/${job.id}/pay` : `/job/${job.id}`;
+  return job.you === "customer" && readyToPay(job) ? `/job/${job.id}/pay` : `/job/${job.id}`;
 }
 
 /** Price bargaining is possible before payment, with a worker who has an account. */

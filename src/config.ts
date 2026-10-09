@@ -19,6 +19,8 @@ export interface Config {
   jobs: {
     maxAmountKobo: number;
     coverDurationDays: number;
+    /** SureJob service fee, added to the customer's total next to the insurance premium. */
+    fee: { percent: number; minKobo: number };
   };
   auth: {
     /** HS256 key. null when JWT_SECRET is unset: a random per-process key is used instead. */
@@ -109,6 +111,8 @@ const envSchema = z.object({
 
   MAX_JOB_AMOUNT_KOBO: z.coerce.number().int().positive().default(50_000_000), // ₦500,000
   COVER_DURATION_DAYS: z.coerce.number().int().positive().default(30),
+  PLATFORM_FEE_PERCENT: z.coerce.number().min(0).max(50).default(2.5),
+  PLATFORM_FEE_MIN_KOBO: z.coerce.number().int().min(0).default(10_000), // ₦100
 
   JWT_SECRET: z.string().min(32, "must be at least 32 characters").optional(),
   JWT_TTL: z.string().regex(/^\d+[smhdw]$/, 'e.g. "7d" or "12h"').default("7d"),
@@ -148,7 +152,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     mongoDb: e.MONGO_DB,
     modes: { payment: e.PAYMENT_MODE, insurance: e.INSURANCE_MODE, payout: e.PAYOUT_MODE },
     mock: { latency: e.MOCK_LATENCY_MS, failOnce: e.MOCK_FAIL },
-    jobs: { maxAmountKobo: e.MAX_JOB_AMOUNT_KOBO, coverDurationDays: e.COVER_DURATION_DAYS },
+    jobs: {
+      maxAmountKobo: e.MAX_JOB_AMOUNT_KOBO,
+      coverDurationDays: e.COVER_DURATION_DAYS,
+      fee: { percent: e.PLATFORM_FEE_PERCENT, minKobo: e.PLATFORM_FEE_MIN_KOBO },
+    },
     auth: { jwtSecret: e.JWT_SECRET ?? null, jwtTtl: e.JWT_TTL },
     ecobank: "missing" in ecobank ? null : ecobank,
   };

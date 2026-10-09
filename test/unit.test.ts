@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mockPremiumKobo } from "../src/adapters/insurance/mock.ts";
+import { serviceFeeKobo } from "../src/jobs/fees.ts";
 import { loadConfig } from "../src/config.ts";
 import { DomainError } from "../src/errors.ts";
 import { JOB_STATUSES, canTransition, nextStatus } from "../src/jobs/stateMachine.ts";
@@ -40,6 +41,16 @@ describe("mock premium", () => {
   });
 });
 
+describe("service fee", () => {
+  const policy = { percent: 2.5, minKobo: 10_000 };
+  it("is the percentage of the job price, rounded up to whole naira, with a floor", () => {
+    assert.equal(serviceFeeKobo(1_500_000, policy), 37_500); // ₦375
+    assert.equal(serviceFeeKobo(1_650_000, policy), 41_300); // ₦412.50 → ₦413
+    assert.equal(serviceFeeKobo(200_000, policy), 10_000); // ₦50 → floor ₦100
+    assert.equal(serviceFeeKobo(1_500_000, { percent: 0, minKobo: 0 }), 0);
+  });
+});
+
 describe("config", () => {
   it("defaults to mock everything", () => {
     const config = loadConfig({});
@@ -47,6 +58,7 @@ describe("config", () => {
     assert.deepEqual(config.mock.latency, { minMs: 300, maxMs: 800 });
     assert.deepEqual(config.mock.failOnce, []);
     assert.equal(config.jobs.maxAmountKobo, 50_000_000);
+    assert.deepEqual(config.jobs.fee, { percent: 2.5, minKobo: 10_000 });
   });
 
   it("parses modes, latency and failure drills", () => {

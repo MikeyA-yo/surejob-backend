@@ -56,6 +56,10 @@ export interface JobRecord {
   title: string;
   amountKobo: number;
   premiumKobo: number | null;
+  /** SureJob service fee, fixed at quote time; null until quoted. */
+  feeKobo: number | null;
+  /** The price the worker has agreed to. Payment needs it to equal amountKobo (registered workers only). */
+  agreedAmountKobo: number | null;
   status: JobStatus;
   quoteId: string | null;
   escrowRef: string | null;
@@ -80,6 +84,8 @@ export type JobPatch = Partial<
     | "amountKobo"
     | "pendingOffer"
     | "premiumKobo"
+    | "feeKobo"
+    | "agreedAmountKobo"
     | "status"
     | "quoteId"
     | "escrowRef"

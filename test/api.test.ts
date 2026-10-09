@@ -27,12 +27,20 @@ describe("happy path", () => {
     assert.deepEqual(booked.body.customer, { id: "usr_tunde", name: "Tunde" });
     assert.deepEqual(booked.body.worker, { id: "usr_emeka", name: "Emeka", onPlatform: true });
     const id = booked.body.id;
+    assert.equal(booked.body.priceAgreed, false);
+
+    const early = await api.request("POST", `/api/jobs/${id}/quote`);
+    assert.equal(early.status, 409);
+    assert.equal(early.body.error.code, "PRICE_NOT_AGREED");
+    const agreed = await api.asWorker<JobView>("POST", `/api/jobs/${id}/agree`);
+    assert.equal(agreed.body.priceAgreed, true);
 
     const quote = await api.request("POST", `/api/jobs/${id}/quote`);
     assert.equal(quote.status, 200);
     assert.match(quote.body.quoteId, /^QTE-/);
     assert.equal(quote.body.premiumKobo, 30_000); // 2% of ₦15,000 = ₦300
-    assert.equal(quote.body.totalKobo, 1_530_000);
+    assert.equal(quote.body.feeKobo, 37_500); // 2.5% of ₦15,000 = ₦375
+    assert.equal(quote.body.totalKobo, 1_567_500);
     assert.ok(quote.body.coverage.every((line: unknown) => typeof line === "string"));
 
     const paid = await api.request<JobView>("POST", `/api/jobs/${id}/pay`, { quoteId: quote.body.quoteId });
@@ -62,6 +70,7 @@ describe("happy path", () => {
     const final = await api.request<JobView>("GET", `/api/jobs/${id}`);
     assert.deepEqual(eventTypes(final.body), [
       "job.booked",
+      "price.agreed",
       "quote.issued",
       "payment.escrowed",
       "policy.issued",
@@ -71,6 +80,12 @@ describe("happy path", () => {
       "payout.issued",
     ]);
     assert.ok(!final.body.events.some((e) => e.detail.includes(second.body.payout!.code!)), "code must not leak into the timeline");
+    assert.match(
+      final.body.events.find((e) => e.type === "payment.escrowed")!.detail,
+      /^₦15,675\.00 held in escrow \(ESC-\w+\): job ₦15,000\.00, cover ₦300\.00, SureJob fee ₦375\.00$/,
+    );
+    assert.match(final.body.events.find((e) => e.type === "payout.issued")!.detail, /^₦15,000\.00 cash-out/, "worker gets the job price");
+    assert.equal(final.body.totalKobo, 1_567_500);
     assert.deepEqual(final.body.modes, { payment: "mock", insurance: "mock", payout: "mock" });
   });
 
@@ -139,22 +154,38 @@ describe("workers not on SureJob", () => {
   });
 });
 
-describe("price negotiation", () => {
+describe("price negotiation and worker agreement", () => {
+  it("the worker must accept the price before the customer can quote or pay", async () => {
+    api = await startTestServer();
+    const id = api.seedJobId;
+
+    for (const path of ["quote", "pay"]) {
+      const res = await api.request("POST", `/api/jobs/${id}/${path}`, path === "pay" ? { quoteId: "QTE-X" } : undefined);
+      assert.equal(res.status, 409, path);
+      assert.equal(res.body.error.code, "PRICE_NOT_AGREED");
+      assert.match(res.body.error.message, /waiting for Emeka to accept the price of ₦15,000/);
+    }
+    assert.equal((await api.request("POST", `/api/jobs/${id}/agree`)).body.error.code, "FORBIDDEN", "customers can't agree for the worker");
+
+    await api.agree(id);
+    await api.agree(id); // no-op
+    const job = await api.request<JobView>("GET", `/api/jobs/${id}`);
+    assert.equal(job.body.priceAgreed, true);
+    assert.equal(eventTypes(job.body).filter((t) => t === "price.agreed").length, 1);
+    assert.equal((await api.request("POST", `/api/jobs/${id}/quote`)).status, 200);
+  });
+
   it("worker counters, customer counters, worker accepts; payment uses the agreed price", async () => {
     api = await startTestServer();
     const id = api.seedJobId; // Brake repair at ₦15,000 with Emeka
-    const quoteBefore = await api.request("POST", `/api/jobs/${id}/quote`);
 
     const offer = await api.asWorker<JobView>("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_800_000 });
     assert.equal(offer.status, 200);
     assert.deepEqual({ ...offer.body.pendingOffer, at: "x" }, { by: "worker", amountKobo: 1_800_000, at: "x" });
     assert.equal(offer.body.amountKobo, 1_500_000, "price unchanged until accepted");
-
-    const blocked = await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: quoteBefore.body.quoteId });
-    assert.equal(blocked.status, 409);
-    assert.equal(blocked.body.error.code, "OFFER_PENDING");
     assert.equal((await api.request("POST", `/api/jobs/${id}/quote`)).body.error.code, "OFFER_PENDING");
     assert.equal((await api.asWorker("POST", `/api/jobs/${id}/offer/accept`)).body.error.code, "FORBIDDEN", "not your own offer");
+    assert.equal((await api.asWorker("POST", `/api/jobs/${id}/agree`)).body.error.code, "OFFER_PENDING");
 
     const counter = await api.request<JobView>("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_650_000 });
     assert.equal(counter.body.pendingOffer?.by, "customer");
@@ -162,15 +193,15 @@ describe("price negotiation", () => {
     assert.equal(agreed.status, 200);
     assert.equal(agreed.body.amountKobo, 1_650_000);
     assert.equal(agreed.body.pendingOffer, null);
-    assert.equal(agreed.body.quoteId, null, "the old quote priced ₦15,000");
+    assert.equal(agreed.body.priceAgreed, true, "accepting is agreeing");
 
-    const stale = await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: quoteBefore.body.quoteId });
-    assert.equal(stale.body.error.code, "QUOTE_REQUIRED");
     const quote = await api.request("POST", `/api/jobs/${id}/quote`);
-    assert.equal(quote.body.totalKobo, 1_650_000 + quote.body.premiumKobo);
+    assert.equal(quote.body.premiumKobo, 35_000); // 2% of ₦16,500 = ₦330 → ₦350
+    assert.equal(quote.body.feeKobo, 41_300); // 2.5% of ₦16,500 = ₦412.50 → ₦413
+    assert.equal(quote.body.totalKobo, 1_650_000 + 35_000 + 41_300);
     const paid = await api.request<JobView>("POST", `/api/jobs/${id}/pay`, { quoteId: quote.body.quoteId });
     assert.equal(paid.body.status, "INSURED");
-    assert.match(paid.body.events.find((e) => e.type === "payment.escrowed")!.detail, /^₦16,850.00 held/); // ₦16,500 + ₦350 cover
+    assert.match(paid.body.events.find((e) => e.type === "payment.escrowed")!.detail, /^₦17,263\.00 held/);
     assert.deepEqual(
       eventTypes(paid.body).filter((t) => t.startsWith("price.")),
       ["price.offered", "price.countered", "price.agreed"],
@@ -181,19 +212,31 @@ describe("price negotiation", () => {
     assert.equal(late.body.error.code, "INVALID_TRANSITION");
   });
 
-  it("declining or withdrawing keeps the price and unblocks payment", async () => {
+  it("a new price clears an old quote; a declined offer keeps an agreed price", async () => {
     api = await startTestServer();
     const id = api.seedJobId;
+    await api.agree(id);
+    const oldQuote = await api.request("POST", `/api/jobs/${id}/quote`);
 
+    // Declined: the agreed ₦15,000 still stands and the quote is still good.
     await api.request("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_200_000 });
     const declined = await api.asWorker<JobView>("POST", `/api/jobs/${id}/offer/decline`);
     assert.equal(declined.body.pendingOffer, null);
     assert.equal(declined.body.amountKobo, 1_500_000);
+    assert.equal(declined.body.priceAgreed, true);
     assert.equal(eventTypes(declined.body).at(-1), "price.declined");
 
+    // Withdrawn: same.
     await api.request("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_300_000 });
     const withdrawn = await api.request<JobView>("POST", `/api/jobs/${id}/offer/decline`);
     assert.equal(eventTypes(withdrawn.body).at(-1), "price.withdrawn");
+
+    // Accepted: new price, old quote gone.
+    await api.asWorker("POST", `/api/jobs/${id}/offer`, { amountKobo: 1_600_000 });
+    const accepted = await api.request<JobView>("POST", `/api/jobs/${id}/offer/accept`);
+    assert.deepEqual([accepted.body.quoteId, accepted.body.premiumKobo, accepted.body.feeKobo], [null, null, null]);
+    const stale = await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: oldQuote.body.quoteId });
+    assert.equal(stale.body.error.code, "QUOTE_REQUIRED");
 
     const quote = await api.request("POST", `/api/jobs/${id}/quote`);
     assert.equal((await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: quote.body.quoteId })).status, 200);
@@ -212,9 +255,18 @@ describe("price negotiation", () => {
     assert.equal((await api.request("POST", `/api/jobs/${id}/offer/decline`)).body.error.code, "INVALID_TRANSITION");
 
     const { body: guestJob } = await api.request<JobView>("POST", "/api/jobs", NEW_WORKER_BOOKING);
+    assert.equal(guestJob.priceAgreed, true, "nobody to agree for an off-platform worker");
     const guest = await api.request("POST", `/api/jobs/${guestJob.id}/offer`, { amountKobo: 700_000 });
     assert.equal(guest.status, 403);
     assert.match(guest.body.error.message, /SureJob account/);
+  });
+
+  it("charges at least the minimum fee", async () => {
+    api = await startTestServer();
+    const { body: job } = await api.request<JobView>("POST", "/api/jobs", { ...SEED_BOOKING, title: "Fix a socket", amountKobo: 200_000 });
+    await api.agree(job.id);
+    const quote = await api.request("POST", `/api/jobs/${job.id}/quote`);
+    assert.equal(quote.body.feeKobo, 10_000); // 2.5% of ₦2,000 = ₦50, floor ₦100
   });
 });
 
@@ -290,6 +342,7 @@ describe("auth", () => {
 describe("state machine enforcement", () => {
   it("rejects pay before a quote", async () => {
     api = await startTestServer();
+    await api.agree(api.seedJobId);
     const res = await api.request("POST", `/api/jobs/${api.seedJobId}/pay`, { quoteId: "QTE-NOPE" });
     assert.equal(res.status, 409);
     assert.equal(res.body.error.code, "QUOTE_REQUIRED");
@@ -298,6 +351,7 @@ describe("state machine enforcement", () => {
   it("rejects pay with a stale quote id", async () => {
     api = await startTestServer();
     const id = api.seedJobId;
+    await api.agree(id);
     const first = await api.request("POST", `/api/jobs/${id}/quote`);
     await api.request("POST", `/api/jobs/${id}/quote`);
     const res = await api.request("POST", `/api/jobs/${id}/pay`, { quoteId: first.body.quoteId });
@@ -329,6 +383,7 @@ describe("idempotency and recovery", () => {
   it("retrying pay after a failed policy step does not charge twice", async () => {
     api = await startTestServer({ failOnce: ["issue"] });
     const { body: job } = await api.request<JobView>("POST", "/api/jobs", SEED_BOOKING);
+    await api.agree(job.id);
     const { body: quote } = await api.request("POST", `/api/jobs/${job.id}/quote`);
 
     const failed = await api.request("POST", `/api/jobs/${job.id}/pay`, { quoteId: quote.quoteId });
@@ -352,6 +407,7 @@ describe("idempotency and recovery", () => {
   it("concurrent pay requests collect exactly once", async () => {
     api = await startTestServer({ latencyMs: 20 });
     const id = api.seedJobId;
+    await api.agree(id);
     const { body: quote } = await api.request("POST", `/api/jobs/${id}/quote`);
 
     const results = await Promise.all(
@@ -433,6 +489,7 @@ describe("modes and demo support", () => {
 
     const { body: job } = await api.request<JobView>("POST", "/api/jobs", SEED_BOOKING);
     assert.equal(job.modes.payment, "live");
+    await api.agree(job.id);
     const { body: quote } = await api.request("POST", `/api/jobs/${job.id}/quote`);
 
     const pay = await api.request("POST", `/api/jobs/${job.id}/pay`, { quoteId: quote.quoteId });
@@ -446,6 +503,7 @@ describe("modes and demo support", () => {
 
   it("reset restores exactly the seed, removes registered accounts and re-arms MOCK_FAIL", async () => {
     api = await startTestServer({ failOnce: ["quote"] });
+    await api.agree(api.seedJobId);
     assert.equal((await api.request("POST", `/api/jobs/${api.seedJobId}/quote`)).status, 502);
     await insuredJob(api);
     const extra = await api.anon("POST", "/api/auth/register", {
@@ -470,7 +528,9 @@ describe("modes and demo support", () => {
     assert.deepEqual(job.worker, { id: "usr_emeka", name: "Emeka", onPlatform: true });
     assert.deepEqual(eventTypes(job), ["job.booked"]);
     assert.equal((await api.request("GET", `/api/jobs/${api.seedJobId}`)).status, 404);
+    assert.equal(job.priceAgreed, false, "the reseeded job waits for Emeka again");
 
+    await api.agree(job.id);
     assert.equal((await api.request("POST", `/api/jobs/${job.id}/quote`)).status, 502, "MOCK_FAIL re-armed");
     assert.equal((await api.request("POST", `/api/jobs/${job.id}/quote`)).status, 200);
   });
@@ -496,6 +556,7 @@ describe("API docs", () => {
       "POST /api/auth/register",
       "POST /api/demo/reset",
       "POST /api/jobs",
+      "POST /api/jobs/{id}/agree",
       "POST /api/jobs/{id}/claim",
       "POST /api/jobs/{id}/confirm",
       "POST /api/jobs/{id}/offer",

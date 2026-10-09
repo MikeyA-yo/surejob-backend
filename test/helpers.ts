@@ -37,6 +37,8 @@ export interface TestServer {
   anon: Call;
   /** Acts with the given bearer token. */
   as(token: string): Call;
+  /** The seeded worker accepts the job's current price (required before the customer can quote and pay). */
+  agree(jobId: string): Promise<void>;
   /** Logs the seeded accounts in again (e.g. after a demo reset). */
   relogin(): Promise<void>;
   close(): Promise<void>;
@@ -55,6 +57,7 @@ export async function startTestServer(options: TestServerOptions = {}): Promise<
     logger: silentLogger,
     maxAmountKobo: 50_000_000,
     coverDurationDays: 30,
+    fee: { percent: 2.5, minKobo: 10_000 },
     onDemoReset: () => mockRuntime.rearm(),
   });
   const auth = new AuthService({ store, tokens: new TokenService("test-secret-test-secret-test-secret", "1h"), logger: silentLogger });
@@ -95,6 +98,10 @@ export async function startTestServer(options: TestServerOptions = {}): Promise<
     asWorker: call(null),
     anon: call(null),
     as: (token) => call(token),
+    async agree(jobId) {
+      const res = await api.asWorker("POST", `/api/jobs/${jobId}/agree`);
+      if (res.status !== 200) throw new Error(`agree failed: ${JSON.stringify(res.body)}`);
+    },
     async relogin() {
       api.request = call(await login(SEED_CUSTOMER.email!));
       api.asWorker = call(await login(SEED_WORKER.email!));
@@ -116,9 +123,10 @@ export const SEED_BOOKING = {
   amountKobo: 1_500_000,
 };
 
-/** Books (as the customer), quotes and pays a job, returning it INSURED. */
+/** Books (as the customer), has a registered worker agree the price, quotes and pays; returns the job INSURED. */
 export async function insuredJob(api: TestServer, booking: object = SEED_BOOKING): Promise<JobView> {
   const { body: job } = await api.request<JobView>("POST", "/api/jobs", booking);
+  if (job.worker.onPlatform) await api.agree(job.id);
   const { body: quote } = await api.request("POST", `/api/jobs/${job.id}/quote`);
   const paid = await api.request<JobView>("POST", `/api/jobs/${job.id}/pay`, { quoteId: quote.quoteId });
   if (paid.status !== 200) throw new Error(`pay failed: ${JSON.stringify(paid.body)}`);

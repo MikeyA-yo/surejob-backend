@@ -8,6 +8,7 @@ import type { Logger } from "../logger.ts";
 import { hashPassword } from "../auth/passwords.ts";
 import { SEED_CUSTOMER, SEED_JOB, SEED_PASSWORD, SEED_WORKER } from "../store/seed.ts";
 import type { ClaimRecord, EventRecord, JobPatch, JobRecord, Party, Store, UserRecord } from "../store/types.ts";
+import { serviceFeeKobo, type FeePolicy } from "./fees.ts";
 import { KeyedMutex } from "./keyedMutex.ts";
 import { nextStatus, type JobAction } from "./stateMachine.ts";
 import { formatNaira, isOnPlatform, toJobView, type JobView, type QuoteView } from "./view.ts";
@@ -18,6 +19,7 @@ export interface JobServiceOptions {
   logger: Logger;
   maxAmountKobo: number;
   coverDurationDays: number;
+  fee: FeePolicy;
   /** Runs after a demo reset, e.g. to re-arm MOCK_FAIL. */
   onDemoReset?: () => void;
   now?: () => Date;
@@ -89,6 +91,7 @@ export class JobService {
   readonly #log: Logger;
   readonly #maxAmountKobo: number;
   readonly #coverDurationDays: number;
+  readonly #fee: FeePolicy;
   readonly #onDemoReset: (() => void) | undefined;
   readonly #now: () => Date;
   readonly #locks = new KeyedMutex();
@@ -99,6 +102,7 @@ export class JobService {
     this.#log = options.logger;
     this.#maxAmountKobo = options.maxAmountKobo;
     this.#coverDurationDays = options.coverDurationDays;
+    this.#fee = options.fee;
     this.#onDemoReset = options.onDemoReset;
     this.#now = options.now ?? (() => new Date());
   }
@@ -207,6 +211,7 @@ export class JobService {
       nextStatus(job.status, "quote");
       requireNoPendingOffer(job);
       const worker = await this.#requireUser(job.workerId);
+      requirePriceAgreed(job, worker);
 
       const quote = await this.#callAdapter(job, "insurance", "quote", (insurance) =>
         insurance.quote({
@@ -216,16 +221,23 @@ export class JobService {
         }),
       );
 
+      const feeKobo = serviceFeeKobo(job.amountKobo, this.#fee);
       await this.#transition(job, "quote", {
-        set: { quoteId: quote.quoteId, premiumKobo: quote.premiumKobo },
-        events: [{ type: "quote.issued", detail: `Cover quoted at ${formatNaira(quote.premiumKobo)} (${quote.quoteId})` }],
+        set: { quoteId: quote.quoteId, premiumKobo: quote.premiumKobo, feeKobo },
+        events: [
+          {
+            type: "quote.issued",
+            detail: `Cover quoted at ${formatNaira(quote.premiumKobo)} (${quote.quoteId}); SureJob fee ${formatNaira(feeKobo)}`,
+          },
+        ],
         usedAdapter: "insurance",
       });
 
       return {
         quoteId: quote.quoteId,
         premiumKobo: quote.premiumKobo,
-        totalKobo: job.amountKobo + quote.premiumKobo,
+        feeKobo,
+        totalKobo: job.amountKobo + quote.premiumKobo + feeKobo,
         coverage: quote.coverage,
       };
     });
@@ -245,16 +257,25 @@ export class JobService {
         throw new DomainError("INVALID_TRANSITION", `cannot pay for a job that is ${job.status}`);
       }
       requireNoPendingOffer(job);
+      requirePriceAgreed(job, await this.#requireUser(job.workerId));
       const premiumKobo = requireMatchingQuote(job, quoteId);
 
       if (job.status === "BOOKED") {
-        const totalKobo = job.amountKobo + premiumKobo;
+        const feeKobo = job.feeKobo ?? 0;
+        const totalKobo = job.amountKobo + premiumKobo + feeKobo;
         const { escrowRef } = await this.#callAdapter(job, "payment", "collect", (payment) =>
           payment.collect({ jobId, amountKobo: totalKobo }),
         );
         job = await this.#transition(job, "collect", {
           set: { escrowRef },
-          events: [{ type: "payment.escrowed", detail: `${formatNaira(totalKobo)} held in escrow (${escrowRef})` }],
+          events: [
+            {
+              type: "payment.escrowed",
+              detail:
+                `${formatNaira(totalKobo)} held in escrow (${escrowRef}): job ${formatNaira(job.amountKobo)}, ` +
+                `cover ${formatNaira(premiumKobo)}, SureJob fee ${formatNaira(feeKobo)}`,
+            },
+          ],
           usedAdapter: "payment",
         });
       }
@@ -318,7 +339,15 @@ export class JobService {
       const updated = await this.#store.updateJob(job.id, {
         expectStatus: "BOOKED",
         // A quote priced the old amount; the customer re-quotes before paying.
-        set: { amountKobo: offer.amountKobo, pendingOffer: null, quoteId: null, premiumKobo: null },
+        set: {
+          amountKobo: offer.amountKobo,
+          // Whoever offered agreed to it, and the other side just accepted: the worker has agreed either way.
+          agreedAmountKobo: offer.amountKobo,
+          pendingOffer: null,
+          quoteId: null,
+          premiumKobo: null,
+          feeKobo: null,
+        },
         events: [
           this.#event({
             type: "price.agreed",
@@ -329,6 +358,28 @@ export class JobService {
       if (!updated) throw await this.#staleJob(job.id);
       this.#log.info("price agreed", { jobId, amountKobo: offer.amountKobo });
       return this.#view(updated, party);
+    });
+  }
+
+  /** The worker accepts the job at its current price. Needed before the customer can quote and pay. */
+  async agreePrice(actor: UserRecord, jobId: string): Promise<JobView> {
+    return this.#locks.run(jobId, async () => {
+      const job = await this.#requireJob(jobId);
+      if (sideOf(job, actor) !== "worker") throw new DomainError("FORBIDDEN", "only the worker accepts the price");
+      await this.#requireNegotiable(job);
+      if (job.pendingOffer) {
+        throw new DomainError("OFFER_PENDING", "there is an open price offer; accept, decline or counter it instead");
+      }
+      if (job.agreedAmountKobo === job.amountKobo) return this.#view(job, "worker");
+
+      const updated = await this.#store.updateJob(job.id, {
+        expectStatus: "BOOKED",
+        set: { agreedAmountKobo: job.amountKobo },
+        events: [this.#event({ type: "price.agreed", detail: `Worker accepted the price of ${formatNaira(job.amountKobo)}` })],
+      });
+      if (!updated) throw await this.#staleJob(job.id);
+      this.#log.info("price agreed", { jobId, amountKobo: job.amountKobo });
+      return this.#view(updated, "worker");
     });
   }
 
@@ -461,6 +512,8 @@ export class JobService {
       title: input.title,
       amountKobo: input.amountKobo,
       premiumKobo: null,
+      feeKobo: null,
+      agreedAmountKobo: null,
       status: "BOOKED",
       quoteId: null,
       escrowRef: null,
@@ -603,6 +656,16 @@ export class JobService {
 
   #timestamp(): string {
     return this.#now().toISOString();
+  }
+}
+
+/** A registered worker must agree to the current price before the customer can quote or pay. */
+function requirePriceAgreed(job: JobRecord, worker: UserRecord): void {
+  if (isOnPlatform(worker) && job.agreedAmountKobo !== job.amountKobo) {
+    throw new DomainError(
+      "PRICE_NOT_AGREED",
+      `waiting for ${worker.name} to accept the price of ${formatNaira(job.amountKobo)}`,
+    );
   }
 }
 

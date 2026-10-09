@@ -7,6 +7,7 @@ import AppShell from "@/components/AppShell";
 import { Card, ErrorNote, PrimaryButton } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { errorMessage, formatNaira, getJob, getQuote, payEscrow, type Job, type Quote } from "@/api";
+import { readyToPay } from "@/lib/jobStatus";
 
 export default function PayScreen({ params }: { params: Promise<{ id: string }> }) {
   const { id: jobId } = use(params);
@@ -31,7 +32,7 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
           router.replace(`/job/${jobId}`);
           return;
         }
-        if (current.pendingOffer) return; // the price isn't settled yet
+        if (!readyToPay(current)) return; // the worker hasn't accepted the price yet
         setQuote(await getQuote(jobId));
       } catch (err) {
         setError(errorMessage(err));
@@ -73,15 +74,24 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
 
         <ErrorNote message={error} />
 
-        {job?.pendingOffer && (
+        {job && !readyToPay(job) && (
           <Card>
             <p className="text-sm text-[#14232B]">
-              {job.pendingOffer.by === "worker" ? `${job.worker.name} proposed` : "You proposed"}{" "}
-              <strong className="text-[#0B3C4F]">{formatNaira(job.pendingOffer.amountKobo)}</strong>. Agree on the price
-              before paying.
+              {job.pendingOffer ? (
+                <>
+                  {job.pendingOffer.by === "worker" ? `${job.worker.name} proposed` : "You proposed"}{" "}
+                  <strong className="text-[#0B3C4F]">{formatNaira(job.pendingOffer.amountKobo)}</strong>. Agree on the
+                  price before paying.
+                </>
+              ) : (
+                <>
+                  Waiting for {job.worker.name} to accept the price of{" "}
+                  <strong className="text-[#0B3C4F]">{formatNaira(job.amountKobo)}</strong>. You can pay once they do.
+                </>
+              )}
             </p>
             <Link href={`/job/${jobId}`} className="inline-block mt-3 text-sm font-bold text-[#0B3C4F] underline">
-              Respond to the offer
+              {job.pendingOffer ? "Respond to the offer" : "View the job"}
             </Link>
           </Card>
         )}
@@ -89,15 +99,21 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
         <Card label="Cost breakdown">
           {quote && job ? (
             <div className="space-y-4 mt-3">
-              <Row label="Job cost" value={formatNaira(job.amountKobo)} />
-              <Row label="Cover cost" value={formatNaira(quote.premiumKobo)} />
+              <Row label={`Job cost (paid to ${job.worker.name})`} value={formatNaira(job.amountKobo)} />
+              <div className="space-y-2">
+                <Row label="Cover & fees" value={formatNaira(quote.premiumKobo + quote.feeKobo)} />
+                <div className="pl-3 space-y-1.5 border-l-2 border-[#0B3C4F]/15">
+                  <SubRow label="Insurance cover (Curacel)" value={formatNaira(quote.premiumKobo)} />
+                  <SubRow label="SureJob service fee" value={formatNaira(quote.feeKobo)} />
+                </div>
+              </div>
               <div className="pt-4 flex justify-between items-baseline">
                 <span className="text-base font-bold text-[#0B3C4F]">Total</span>
                 <span className="text-3xl font-bold text-[#0B3C4F]">{formatNaira(quote.totalKobo)}</span>
               </div>
             </div>
           ) : (
-            !error && !job?.pendingOffer && <p className="text-sm opacity-60 mt-2">Getting your cover quote…</p>
+            !error && job && readyToPay(job) && <p className="text-sm opacity-60 mt-2">Getting your cover quote…</p>
           )}
         </Card>
 
@@ -120,6 +136,15 @@ export default function PayScreen({ params }: { params: Promise<{ id: string }> 
         )}
       </div>
     </AppShell>
+  );
+}
+
+function SubRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between items-center text-xs font-normal text-[#14232B] opacity-80">
+      <span>{label}</span>
+      <span>{value}</span>
+    </div>
   );
 }
 

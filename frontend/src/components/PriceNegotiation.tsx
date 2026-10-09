@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { acceptOffer, declineOffer, errorMessage, formatNaira, offerPrice, type Job } from "@/api";
+import { acceptOffer, agreePrice, declineOffer, errorMessage, formatNaira, offerPrice, type Job } from "@/api";
 import { Card, ErrorNote } from "@/components/ui";
 
 /** Bargaining over a BOOKED job's price. Either side proposes; the other accepts, declines or counters. */
@@ -39,9 +39,27 @@ export default function PriceNegotiation({ job, onChange }: { job: Job; onChange
   return (
     <Card label="Price">
       <div className="flex items-baseline justify-between mt-1">
-        <span className="text-sm text-[#14232B] opacity-70">Agreed price</span>
+        <span className="text-sm text-[#14232B] opacity-70">Job price</span>
         <span className="text-2xl font-bold text-[#0B3C4F]">{formatNaira(job.amountKobo)}</span>
       </div>
+      <p className={`text-xs font-bold mt-1 ${job.priceAgreed ? "text-[#1B8A5A]" : "text-[#14566E]"}`}>
+        {job.priceAgreed
+          ? `✓ Accepted by ${job.worker.name}`
+          : job.you === "worker"
+            ? "Accept this price, or propose a different one, before the customer can pay."
+            : `Waiting for ${job.worker.name} to accept this price.`}
+      </p>
+
+      {job.you === "worker" && !job.priceAgreed && !offer && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => run(() => agreePrice(job.id))}
+          className="mt-4 w-full h-11 rounded-xl text-sm font-bold bg-[#1B8A5A] text-white disabled:opacity-50"
+        >
+          Accept {formatNaira(job.amountKobo)}
+        </button>
+      )}
 
       {offer && (
         <div className="mt-4 bg-white rounded-xl p-4">

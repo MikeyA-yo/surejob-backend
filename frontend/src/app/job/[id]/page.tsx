@@ -8,7 +8,7 @@ import { Card, ErrorNote, PrimaryButton } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { confirmJob, errorMessage, formatNaira, getJob, type Job } from "@/api";
 import PriceNegotiation from "@/components/PriceNegotiation";
-import { canNegotiate, STATUS_LABELS } from "@/lib/jobStatus";
+import { canNegotiate, readyToPay, STATUS_LABELS } from "@/lib/jobStatus";
 
 const POLL_MS = 2000;
 const FINISHED: Job["status"][] = ["PAID_OUT", "CLAIM_FILED"];
@@ -125,11 +125,16 @@ function Guidance({ job }: { job: Job }) {
     case "BOOKED":
       if (job.pendingOffer && job.pendingOffer.by !== job.you) text = "You have a price offer to answer below.";
       else if (job.pendingOffer) text = "Waiting for an answer to your price offer.";
-      else if (job.you === "customer") {
+      else if (!job.priceAgreed) {
+        text =
+          job.you === "worker"
+            ? "Accept the price below, or propose a different one."
+            : `Waiting for ${job.worker.name} to accept the price. You can also propose a different one.`;
+      } else if (job.you === "customer") {
         text = job.worker.onPlatform
-          ? "Pay into escrow to start the job, or propose a different price below."
+          ? `${job.worker.name} accepted the price. Pay into escrow to start the job.`
           : "Pay into escrow to start the job.";
-      } else text = "Waiting for the customer to pay. You can propose a different price below.";
+      } else text = "You accepted the price. Waiting for the customer to pay into escrow.";
       break;
     case "ESCROWED":
       text = "Payment is held. Cover is being issued.";
@@ -161,10 +166,10 @@ function PrimaryAction({ job, busy, onConfirm }: { job: Job; busy: boolean; onCo
     "w-full h-12 bg-[#0B3C4F] text-white font-bold rounded-xl flex items-center justify-center transition-opacity hover:opacity-95";
 
   if (job.status === "BOOKED" && job.you === "customer") {
-    if (job.pendingOffer) {
+    if (!readyToPay(job)) {
       return (
         <PrimaryButton disabled onClick={() => undefined}>
-          Agree on the price to continue
+          {job.pendingOffer ? "Agree on the price to continue" : `Waiting for ${job.worker.name} to accept`}
         </PrimaryButton>
       );
     }

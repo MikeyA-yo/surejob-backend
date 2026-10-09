@@ -12,10 +12,14 @@ export interface JobView {
   title: string;
   status: JobStatus;
   amountKobo: number;
-  /** null until quoted. */
+  /** Insurance premium; null until quoted. */
   premiumKobo: number | null;
-  /** amountKobo + premiumKobo (premium counts as 0 until quoted). */
+  /** SureJob service fee; null until quoted. */
+  feeKobo: number | null;
+  /** amountKobo + premiumKobo + feeKobo (unquoted parts count as 0). */
   totalKobo: number;
+  /** Whether the worker has agreed to amountKobo. Always true for a worker who is not on the platform. */
+  priceAgreed: boolean;
   quoteId: string | null;
   customer: { id: string; name: string };
   /** An open price proposal (BOOKED jobs with a registered worker); the job's price changes only when the other side accepts. */
@@ -40,7 +44,10 @@ export interface JobView {
 
 export interface QuoteView {
   quoteId: string;
+  /** Insurance premium. */
   premiumKobo: number;
+  /** SureJob service fee. */
+  feeKobo: number;
   totalKobo: number;
   coverage: string[];
 }
@@ -71,7 +78,9 @@ export function toJobView(job: JobRecord, customer: UserRecord, worker: UserReco
     status: job.status,
     amountKobo: job.amountKobo,
     premiumKobo: job.premiumKobo,
-    totalKobo: job.amountKobo + (job.premiumKobo ?? 0),
+    feeKobo: job.feeKobo,
+    totalKobo: job.amountKobo + (job.premiumKobo ?? 0) + (job.feeKobo ?? 0),
+    priceAgreed: !workerOnPlatform || job.agreedAmountKobo === job.amountKobo,
     quoteId: job.quoteId,
     pendingOffer: job.pendingOffer,
     customer: { id: customer.id, name: customer.name },

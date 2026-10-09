@@ -13,7 +13,8 @@ export type ErrorCode =
   | "INVALID_CREDENTIALS"
   | "FORBIDDEN"
   | "EMAIL_TAKEN"
-  | "OFFER_PENDING";
+  | "OFFER_PENDING"
+  | "PRICE_NOT_AGREED";
 
 export class DomainError extends Error {
   readonly code: ErrorCode;

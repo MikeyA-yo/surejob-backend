@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     logger: log,
     maxAmountKobo: config.jobs.maxAmountKobo,
     coverDurationDays: config.jobs.coverDurationDays,
+    fee: config.jobs.fee,
     onDemoReset: () => mockRuntime.rearm(),
   });
 

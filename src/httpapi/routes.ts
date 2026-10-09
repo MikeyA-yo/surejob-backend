@@ -76,6 +76,10 @@ export function apiRoutes({ jobs, auth }: Services): Router {
     res.json(await jobs.acceptOffer(currentUser(res), req.params.id));
   });
 
+  router.post("/jobs/:id/agree", async (req, res) => {
+    res.json(await jobs.agreePrice(currentUser(res), req.params.id));
+  });
+
   router.post("/jobs/:id/offer/decline", async (req, res) => {
     res.json(await jobs.declineOffer(currentUser(res), req.params.id));
   });

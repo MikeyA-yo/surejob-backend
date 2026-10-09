@@ -66,6 +66,11 @@ const MIGRATIONS: readonly string[] = [
   ALTER TABLE jobs ADD COLUMN offer_amount_kobo INTEGER CHECK (offer_amount_kobo > 0);
   ALTER TABLE jobs ADD COLUMN offer_at TEXT;
   `,
+  // 4: worker price agreement and the SureJob service fee.
+  `
+  ALTER TABLE jobs ADD COLUMN agreed_amount_kobo INTEGER;
+  ALTER TABLE jobs ADD COLUMN fee_kobo INTEGER CHECK (fee_kobo >= 0);
+  `,
 ];
 
 export function migrate(db: DatabaseSync): void {

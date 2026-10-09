@@ -46,8 +46,13 @@ export interface Job {
   title: string;
   status: JobStatus;
   amountKobo: number;
+  /** Insurance premium; null until quoted. */
   premiumKobo: number | null;
+  /** SureJob service fee; null until quoted. */
+  feeKobo: number | null;
   totalKobo: number;
+  /** The worker has accepted amountKobo. Needed before quote and pay; always true for off-platform workers. */
+  priceAgreed: boolean;
   quoteId: string | null;
   /** Open price proposal (BOOKED jobs with a registered worker). The price changes only when the other side accepts. */
   pendingOffer: { by: Party; amountKobo: number; at: string } | null;
@@ -68,7 +73,10 @@ export interface Job {
 
 export interface Quote {
   quoteId: string;
+  /** Insurance cover. */
   premiumKobo: number;
+  /** SureJob service fee. */
+  feeKobo: number;
   totalKobo: number;
   coverage: string[];
 }
@@ -183,6 +191,9 @@ export const payEscrow = (jobId: string, quoteId: string) =>
 /** Proposes a new price, or counters the other side's offer. */
 export const offerPrice = (jobId: string, amountKobo: number) =>
   request<Job>(`/jobs/${encodeURIComponent(jobId)}/offer`, { method: "POST", body: { amountKobo } });
+
+/** The worker accepts the job at its current price. */
+export const agreePrice = (jobId: string) => request<Job>(`/jobs/${encodeURIComponent(jobId)}/agree`, { method: "POST" });
 
 export const acceptOffer = (jobId: string) =>
   request<Job>(`/jobs/${encodeURIComponent(jobId)}/offer/accept`, { method: "POST" });
