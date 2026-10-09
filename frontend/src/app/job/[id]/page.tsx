@@ -49,7 +49,9 @@ export default function EscrowStatusScreen({ params }: { params: Promise<{ id: s
     try {
       const updated = await confirmJob(jobId);
       setJob(updated);
-      if (updated.status === "PAID_OUT" && updated.payout?.code) router.push(`/job/${jobId}/payout`);
+      if (updated.status === "PAID_OUT") {
+        router.push(`/job/${jobId}/payout`);
+      }
     } catch (err) {
       setActionError(errorMessage(err));
     } finally {
@@ -132,10 +134,10 @@ function Guidance({ job }: { job: Job }) {
       text = "Both confirmed, but the payout didn't go through. Try again.";
       break;
     case "PAID_OUT":
-      text = job.payout?.code
-        ? job.you === "worker"
-          ? "Your cash code is ready."
-          : `Payout issued. Pass the cash code to ${job.worker.name}.`
+      text = job.you === "customer"
+        ? `Payment released from escrow to ${job.worker.name}.`
+        : job.payout?.code
+        ? "Your cash code is ready."
         : `Payout sent to ${job.worker.name}.`;
       break;
     case "CLAIM_FILED":
@@ -156,12 +158,21 @@ function PrimaryAction({ job, busy, onConfirm }: { job: Job; busy: boolean; onCo
       </Link>
     );
   }
-  if (job.status === "PAID_OUT" && job.payout?.code) {
-    return (
-      <Link href={`/job/${job.id}/payout`} className={linkClass}>
-        View cash code
-      </Link>
-    );
+  if (job.status === "PAID_OUT") {
+    if (job.you === "worker" && job.payout?.code) {
+      return (
+        <Link href={`/job/${job.id}/payout`} className={linkClass}>
+          View cash code
+        </Link>
+      );
+    }
+    if (job.you === "customer") {
+      return (
+        <Link href={`/job/${job.id}/payout`} className={linkClass}>
+          View release confirmation
+        </Link>
+      );
+    }
   }
   if (job.status === "CONFIRMED") {
     return (
