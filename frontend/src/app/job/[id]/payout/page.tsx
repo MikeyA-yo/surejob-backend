@@ -146,6 +146,30 @@ export default function PayoutScreen({ params }: { params: Promise<{ id: string 
             </div>
           </div>
 
+          {/* A worker without a SureJob account can't see the code, so the customer passes it on. */}
+          {!job.worker.onPlatform && code && (
+            <div className="bg-[#EEF4F6] rounded-xl p-6 space-y-3">
+              <span className="text-xs font-bold text-[#0B3C4F] uppercase tracking-wider block">
+                Cash code for {job.worker.name}
+              </span>
+              <p className="text-sm font-normal text-[#14232B] opacity-80">
+                {job.worker.name} isn&apos;t on SureJob. Pass this code on; they can cash it at any Ecobank agent, Xpress
+                Point or ATM.
+              </p>
+              <span className="text-4xl font-bold font-mono tracking-widest text-[#0B3C4F] block break-all">
+                {code.split("").join(" ")}
+              </span>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="h-10 px-4 rounded-xl text-sm font-bold bg-[#0B3C4F] text-white"
+              >
+                {copied ? "Copied" : "Copy code"}
+              </button>
+              <ErrorNote message={error} />
+            </div>
+          )}
+
           {/* Claim Link */}
           <div className="pt-2">
             <Link
