@@ -4,6 +4,8 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { ErrorNote } from "@/components/ui";
+import DashboardHeader from "@/components/DashboardHeader";
+import EmptyJobState from "@/components/EmptyJobState";
 import { useAuth } from "@/context/AuthContext";
 import { errorMessage, formatNaira, listMyJobs, type Job } from "@/api";
 import { jobHref, STATUS_LABELS } from "@/lib/jobStatus";
@@ -25,32 +27,29 @@ export default function MyJobsScreen() {
   }, [user]);
 
   const isCustomer = user?.role === "customer";
+  const hasJobs = Boolean(jobs && jobs.length > 0);
 
   return (
     <AppShell
       bottomAction={
-        isCustomer ? (
+        isCustomer && hasJobs ? (
           <Link
             href="/book"
             className="w-full h-12 bg-[#0B3C4F] text-white font-bold rounded-xl flex items-center justify-center transition-opacity hover:opacity-95"
           >
-            Book a job
+            Book another job
           </Link>
         ) : undefined
       }
     >
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0B3C4F]">My jobs</h1>
-          <p className="text-sm text-[#14232B] mt-1 opacity-70">
-            {isCustomer ? "Jobs you've booked." : "Jobs you've been booked for."}
-          </p>
-        </div>
+        <DashboardHeader userName={user?.name} />
 
         <ErrorNote message={error} />
         {!jobs && !error && <p className="text-sm opacity-60">Loading…</p>}
+
         {jobs?.length === 0 && (
-          <p className="text-sm opacity-70">{isCustomer ? "No jobs yet. Book your first one below." : "No jobs yet."}</p>
+          <EmptyJobState actionHref={isCustomer ? "/book" : undefined} />
         )}
 
         <div className="space-y-3">
